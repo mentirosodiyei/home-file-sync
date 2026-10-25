@@ -1,0 +1,24 @@
+[package]
+name = "show-file-sync"
+description = "Show File Sync: sincronización de carpetas entre equipos de una red local para técnicos audiovisuales"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "show-file-sync"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+sfs-core = { path = "../../crates/sfs-core" }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["time"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

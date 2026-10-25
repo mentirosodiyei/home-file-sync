@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Show File Sync</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 0 1-13.7 5.6M4 12a8 8 0 0 1 13.7-5.6" /><path d="M18 3v4h-4M6 21v-4h4" /></svg>
+      <span>SHOW FILE SYNC</span>
+    </div>
+    <div id="overall" class="pill" hidden></div>
+  </header>
+
+  <main>
+    <!-- Paso 1: carpeta -->
+    <section id="screen-folder" class="screen" hidden>
+      <div class="hero">
+        <h1>Elige la carpeta que quieres sincronizar</h1>
+        <p>Todo lo que pongas en ella aparecerá en los demás equipos del grupo. Cada equipo usa su propia carpeta local.</p>
+        <button class="primary big" data-action="choose-folder">Elegir carpeta…</button>
+        <p class="error" id="folder-error" hidden></p>
+      </div>
+    </section>
+
+    <!-- Paso 2: grupo -->
+    <section id="screen-group" class="screen" hidden>
+      <div class="folder-line"><span class="label">Carpeta</span><code class="path" data-bind="folder"></code><button class="link" data-action="choose-folder">Cambiar</button></div>
+      <div class="cards">
+        <div class="card">
+          <h2>¿Es el primer equipo?</h2>
+          <p>Crea un grupo. Verás un código para introducir en los demás equipos.</p>
+          <button class="primary" data-action="create-group">Crear grupo nuevo</button>
+        </div>
+        <div class="card">
+          <h2>Unirse a un grupo</h2>
+          <p>Escribe el código que muestra uno de los equipos del grupo.</p>
+          <div id="open-groups"></div>
+          <form id="join-form" autocomplete="off">
+            <input id="code" class="code-input" inputmode="numeric" placeholder="0000 0000" maxlength="9" aria-label="Código de 8 cifras" />
+            <button class="primary" type="submit" id="join-btn">Unirse</button>
+          </form>
+          <p class="error" id="join-error" hidden></p>
+        </div>
+      </div>
+      <p class="hint" data-bind="networkWarning" hidden></p>
+    </section>
+
+    <!-- Pantalla principal -->
+    <section id="screen-main" class="screen" hidden>
+      <div class="banner warn" id="net-warning" hidden></div>
+      <div class="banner error" id="folder-banner" hidden></div>
+
+      <div class="folder-line">
+        <span class="label">Carpeta sincronizada</span>
+        <code class="path" data-bind="folder"></code>
+        <span class="actions"><button class="link" data-action="open-folder">Abrir</button><button class="link" data-action="choose-folder">Cambiar</button></span>
+      </div>
+
+      <div class="pairing" id="pairing" hidden>
+        <div>
+          <div class="label">Código para añadir equipos</div>
+          <div class="code" id="pair-code"></div>
+          <div class="muted" id="pair-expiry"></div>
+        </div>
+        <button class="link" data-action="close-pairing">Cerrar</button>
+      </div>
+
+      <h3>Equipos <span class="count" id="dev-count"></span></h3>
+      <ul class="devices" id="devices"></ul>
+      <p class="empty" id="no-devices" hidden>Todavía no hay otros equipos. Pulsa «Añadir equipo» y escribe el código en el otro ordenador.</p>
+
+      <h3>Actividad</h3>
+      <div class="summary" id="summary"></div>
+      <ul class="transfers" id="transfers"></ul>
+
+      <div class="banner conflict" id="conflicts" hidden>
+        <span id="conflict-text"></span>
+        <button class="link" data-action="ack-conflicts">Entendido</button>
+      </div>
+      <ul class="errors" id="errors"></ul>
+
+      <details class="history">
+        <summary>Historial</summary>
+        <ul id="events"></ul>
+      </details>
+    </section>
+  </main>
+
+  <footer class="bottom" id="footer" hidden>
+    <span class="me"><span class="dot synced"></span><span data-bind="deviceName"></span></span>
+    <span class="group muted" data-bind="groupName"></span>
+    <span class="spacer"></span>
+    <button class="secondary" data-action="add-device">Añadir equipo</button>
+    <div class="menu">
+      <button class="icon" id="menu-btn" aria-label="Más opciones">⋯</button>
+      <div class="menu-pop" id="menu" hidden>
+        <button data-action="rename">Cambiar nombre de este equipo</button>
+        <button data-action="leave" class="danger">Salir del grupo</button>
+      </div>
+    </div>
+  </footer>
+
+  <dialog id="dialog">
+    <form method="dialog">
+      <p id="dialog-text"></p>
+      <input id="dialog-input" hidden />
+      <menu><button value="cancel" class="secondary">Cancelar</button><button value="ok" class="primary" id="dialog-ok">Aceptar</button></menu>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

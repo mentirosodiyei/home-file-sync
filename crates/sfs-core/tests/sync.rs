@@ -200,7 +200,7 @@ async fn concurrent_edits_keep_both_copies() {
     assert_eq!(a.read("Final.pptx").unwrap(), b"version de B, mas reciente");
     let copy = files.iter().find(|(p, _)| p.contains("conflicto")).expect("copia de conflicto");
     assert_eq!(copy.1, b"version de A");
-    assert!(copy.0.starts_with("Final (conflicto - Mac A - "), "{}", copy.0);
+    assert!(copy.0.starts_with("old/Final (conflicto - Mac A - "), "la perdedora va a old/: {}", copy.0);
     assert!(a.engine.snapshot().conflicts >= 1);
     // Estable: no se generan más copias.
     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -218,15 +218,22 @@ async fn updates_propagate_and_old_version_is_kept() {
     tokio::time::sleep(Duration::from_millis(1200)).await;
     a.write("guion.pdf", b"v2 corregida");
     wait_for("v2 en B", 30, || b.read("guion.pdf").as_deref() == Some(b"v2 corregida")).await;
-    // La versión sustituida queda guardada en .showfilesync/versiones.
-    let versions = b.root().join(".showfilesync/versiones");
-    let found = walk(&versions).iter().any(|p| std::fs::read(p).ok().as_deref() == Some(b"v1"));
-    assert!(found, "la versión anterior debe conservarse");
-    // Y un cambio en B vuelve a A.
+    // La versión sustituida va a la carpeta visible old/ con su fecha…
+    let old_v1 = |n: &Node| n.files().into_iter().any(|(p, d)| p.starts_with("old/guion (") && p.ends_with(").pdf") && d == b"v1");
+    wait_for("v1 en old/ de B", 10, || old_v1(&b)).await;
+    // …y como old/ se sincroniza, también llega al equipo donde se editó.
+    wait_for("v1 en old/ de A", 30, || old_v1(&a)).await;
+    // Un cambio en B vuelve a A, y la v2 queda en old/ en ambos.
     tokio::time::sleep(Duration::from_millis(1200)).await;
     b.write("guion.pdf", b"v3 desde B");
     wait_for("v3 en A", 30, || a.read("guion.pdf").as_deref() == Some(b"v3 desde B")).await;
+    let old_v2 = |n: &Node| n.files().into_iter().any(|(p, d)| p.starts_with("old/guion (") && d == b"v2 corregida");
+    wait_for("v2 en old/ de A y B", 30, || old_v2(&a) && old_v2(&b)).await;
     assert!(!a.files().iter().any(|(p, _)| p.contains("conflicto")));
+    // Sin duplicados: cada versión antigua una sola vez, igual en ambos.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(a.files(), b.files());
+    assert_eq!(a.files().len(), 3, "{:?}", a.files().iter().map(|f| &f.0).collect::<Vec<_>>());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

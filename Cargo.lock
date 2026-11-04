@@ -3604,7 +3604,7 @@ dependencies = [
 
 [[package]]
 name = "sfs-cli"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "serde_json",
  "sfs-core",
@@ -3614,9 +3614,10 @@ dependencies = [
 
 [[package]]
 name = "sfs-core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "blake3",
+ "chrono",
  "filetime",
  "fs4",
  "getrandom 0.2.17",
@@ -3669,7 +3670,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "show-file-sync"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "serde",
  "serde_json",

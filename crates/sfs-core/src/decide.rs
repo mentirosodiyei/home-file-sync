@@ -97,8 +97,9 @@ pub fn better(a: &FileEntry, b: &FileEntry) -> bool {
     }
 }
 
-/// Nombre de la copia de conflicto, determinista en todos los equipos:
-/// `Presentación (conflicto - PC Sala 2 - 3fa2c1).pptx`
+/// Nombre de la copia de conflicto, determinista en todos los equipos, dentro
+/// de la carpeta de versiones anteriores:
+/// `old/Presentación (conflicto - PC Sala 2 - 3fa2c1).pptx`
 pub fn conflict_name(entry: &FileEntry) -> String {
     let (dir, stem, ext) = split_name(&entry.path);
     let who: String = entry
@@ -110,7 +111,7 @@ pub fn conflict_name(entry: &FileEntry) -> String {
     let who = who.trim();
     let who = if who.is_empty() { "otro equipo" } else { who };
     let short = &entry.hash[..entry.hash.len().min(6)];
-    format!("{dir}{stem} (conflicto - {who} - {short}){ext}")
+    format!("{}/{dir}{stem} (conflicto - {who} - {short}){ext}", crate::fsops::OLD_DIR)
 }
 
 #[cfg(test)]
@@ -198,9 +199,9 @@ mod tests {
     #[test]
     fn conflict_names() {
         let mut x = e("3fa2c1d8ee", 1, &[]);
-        assert_eq!(conflict_name(&x), "Carpeta/Final (conflicto - PC Sala 2 - 3fa2c1).pptx");
+        assert_eq!(conflict_name(&x), "old/Carpeta/Final (conflicto - PC Sala 2 - 3fa2c1).pptx");
         x.modified_by = "Mac: Juan/2".into();
         x.path = "LEEME".into();
-        assert_eq!(conflict_name(&x), "LEEME (conflicto - Mac Juan2 - 3fa2c1)");
+        assert_eq!(conflict_name(&x), "old/LEEME (conflicto - Mac Juan2 - 3fa2c1)");
     }
 }

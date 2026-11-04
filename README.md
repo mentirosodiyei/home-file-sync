@@ -25,8 +25,9 @@ Al cerrar la ventana, Show File Sync sigue funcionando en la **bandeja del siste
 ## Qué garantiza
 
 - **No se pierden archivos.**
-  - Si dos equipos tienen versiones distintas del mismo archivo, se conservan ambas: la otra queda como `Nombre (conflicto - Equipo - abc123).pptx`.
-  - Cuando llega una versión nueva, la anterior se guarda 14 días en `.showfilesync/versiones`.
+  - Cuando un archivo cambia, la versión nueva queda en su sitio y la anterior pasa a la carpeta **`old`**, dentro de la carpeta sincronizada, con la fecha en el nombre: `old/Día 1/Ponencia (2026-11-04 15.20).pptx`. La carpeta `old` se sincroniza como las demás, así que todos los equipos tienen las versiones anteriores, también el que editó.
+  - Si dos equipos cambian el mismo archivo a la vez, se queda la versión más reciente y la otra va a `old/` como `Nombre (conflicto - Equipo - abc123).pptx`.
+  - Lo que hay en `old` no se borra solo: puedes vaciarla cuando quieras, y eso también se replica.
 - **Las carpetas funcionan como una sola.** Lo que se añade, edita, renombra o borra en un equipo se replica en todos.
   - Un archivo borrado no se destruye en los demás equipos: se mueve a su carpeta oculta `.showfilesync/papelera` y se conserva 14 días, por si se borró por error.
   - Si un equipo edita un archivo mientras otro lo borra, gana la edición.

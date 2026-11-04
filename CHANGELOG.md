@@ -1,5 +1,10 @@
 # Historial de versiones
 
+## 0.1.4
+- **Carpeta `old` visible:** cuando un archivo cambia, la versión nueva queda en su sitio y la anterior pasa a `old/` (misma subcarpeta, fecha en el nombre).
+  - `old` se sincroniza, así que todos los equipos tienen las versiones anteriores, también el que hizo el cambio.
+  - Las copias de conflicto también van a `old/`.
+
 ## 0.1.3
 - **Las carpetas funcionan como una sola**: lo que se añade, edita, renombra o borra en un equipo se replica en todos.
   - Lo borrado en otro equipo no se destruye: se mueve a `.showfilesync/papelera` y se conserva 14 días.

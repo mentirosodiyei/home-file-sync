@@ -25,6 +25,7 @@ if-addrs = "0.13"
 fs4 = "0.13"
 walkdir = "2"
 hex = "0.4"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }

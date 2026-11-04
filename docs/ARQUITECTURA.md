@@ -125,7 +125,7 @@ Cada archivo tiene una entrada con estos campos: ruta (NFC, `/`), tamaño,
 | La remota es un borrado concurrente con una edición local | Nada: gana la edición, que después llega al equipo que borró. |
 | No existe aquí | Descargar. |
 | Mismo hash | Fusionar vectores. No se transfiere nada. |
-| Remota posterior | Descargar. La versión local se mueve a `.showfilesync/versiones/<fecha>/`. |
+| Remota posterior | Descargar. La versión local se mueve a la carpeta visible `old/` (misma subruta, fecha de esa versión en el nombre), que se sincroniza: así todos los equipos, también el que editó, tienen la versión anterior. Dentro de `old/` no se generan más versiones (la anterior va a la copia oculta `.showfilesync/versiones`). |
 | Local posterior | Nada: el otro equipo la pedirá. |
 | Independientes (concurrentes) | **Conflicto**. |
 | Borrada aquí y la remota es la versión anterior al borrado | Nada. |
@@ -133,7 +133,7 @@ Cada archivo tiene una entrada con estos campos: ruta (NFC, `/`), tamaño,
 
 - **Conflicto.**
   - Gana la versión con `mtime` mayor; si empatan, el hash mayor. Es determinista, así que todos los equipos eligen la misma.
-  - El equipo que tiene la versión perdedora la renombra a `Nombre (conflicto - <equipo> - <hash6>).ext` y después coloca la ganadora.
+  - El equipo que tiene la versión perdedora la mueve a `old/Nombre (conflicto - <equipo> - <hash6>).ext` y después coloca la ganadora.
   - La copia de conflicto se sincroniza como un archivo más. Su nombre también es determinista, así que no se multiplican copias.
   - **Nunca se sobrescribe una versión en silencio.**
 - Las claves de archivo no distinguen mayúsculas y están en NFC. APFS y NTFS no distinguen mayúsculas por defecto, y macOS puede entregar nombres en NFD.
@@ -174,7 +174,7 @@ Cada archivo tiene una entrada con estos campos: ruta (NFC, `/`), tamaño,
 - **Integridad**: al terminar se verifica el BLAKE3 completo. Si no coincide, se descarta y se descarga de nuevo.
 - **Colocación** (bajo el bloqueo del índice):
   1. Se comprueba que el archivo local no ha cambiado desde que se decidió la descarga. Si cambió, se reevalúa; nunca se pisa una edición reciente.
-  2. Se mueve la versión anterior a `versiones/`.
+  2. Se mueve la versión anterior a `old/` (visible y sincronizada).
   3. Se renombra el temporal a su destino (`rename`, atómico en APFS, HFS+ y NTFS).
   4. Se restaura la fecha original y se dejan permisos `0644`: nunca ejecutable.
 - **Archivo ya presente con otro nombre**: si el contenido ya existe localmente, se copia en local sin usar la red.

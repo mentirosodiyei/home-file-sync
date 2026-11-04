@@ -686,34 +686,61 @@ fn place(inner: &Inner, folder: &FolderCtx, need: &Need, temp: &std::path::Path)
         }
     };
 
-    if action == Action::DownloadConflict {
-        let c = present.expect("conflicto con archivo presente");
-        let mut copy = conflict_name(&c.entry);
-        if to_local(root, &copy).exists() || idx.get(&key_of(&copy)).is_some_and(|e| !e.entry.deleted && e.entry.hash != c.entry.hash) {
-            let (d, s, e) = crate::pathsafe::split_name(&copy);
-            copy = format!("{d}{s} {}{e}", &c.entry.hash[6..12]);
+    // La versión local que se sustituye (por una más reciente o por la
+    // ganadora de un conflicto) pasa a la carpeta visible `old/`, que se
+    // sincroniza como las demás. Dentro de `old/` no se generan más versiones:
+    // ahí la anterior va a la copia oculta de seguridad.
+    let mut backup = None;
+    let mut parked: Option<String> = None;
+    if let Some(c) = present.filter(|_| matches!(action, Action::Download | Action::DownloadConflict)) {
+        if fsops::is_in_old(&c.disk) {
+            backup = fsops::backup_existing(root, &dest).map_err(fail)?;
+        } else {
+            let mut copy = if action == Action::DownloadConflict {
+                conflict_name(&c.entry)
+            } else {
+                fsops::old_version_name(&c.entry.path, c.entry.mtime_ns)
+            };
+            let taken = |p: &str, idx: &crate::index::LocalIndex| {
+                idx.get(&key_of(p)).is_some_and(|e| !e.entry.deleted && e.entry.hash != c.entry.hash)
+                    || (to_local(root, p).exists() && idx.get(&key_of(p)).is_none_or(|e| e.entry.hash != c.entry.hash))
+            };
+            if taken(&copy, &idx) {
+                let (d, s, e) = crate::pathsafe::split_name(&copy);
+                copy = format!("{d}{s} {}{e}", &c.entry.hash[..6]);
+            }
+            if to_local(root, &copy).exists() {
+                // Ya está (la ha creado otro equipo con el mismo contenido).
+                backup = fsops::backup_existing(root, &c.disk).map_err(fail)?;
+            } else {
+                if let Some(parent) = to_local(root, &copy).parent() {
+                    std::fs::create_dir_all(parent).map_err(fail)?;
+                }
+                crate::pathsafe::check_no_symlinks(root, &copy).map_err(fail)?;
+                std::fs::rename(to_local(root, &c.disk), to_local(root, &copy)).map_err(fail)?;
+                backup = Some(to_local(root, &copy));
+                let m = std::fs::metadata(to_local(root, &copy)).map_err(fail)?;
+                let mut vv = VersionVector::new();
+                vv.bump(inner.my_num);
+                let entry = FileEntry {
+                    path: copy.clone(),
+                    size: c.entry.size,
+                    mtime_ns: c.entry.mtime_ns,
+                    hash: c.entry.hash.clone(),
+                    vv,
+                    deleted: false,
+                    modified_by: c.entry.modified_by.clone(),
+                };
+                changed.push(entry.clone());
+                idx.put(LocalEntry { entry, disk: copy.clone(), disk_size: m.len(), disk_mtime_ns: crate::scanner::mtime_ns(&m) });
+                parked = Some(copy.clone());
+            }
+            if action == Action::DownloadConflict {
+                idx.entries.remove(&need.key);
+                conflict = Some(copy);
+            }
         }
-        crate::pathsafe::check_no_symlinks(root, &copy).map_err(fail)?;
-        std::fs::rename(to_local(root, &c.disk), to_local(root, &copy)).map_err(fail)?;
-        let m = std::fs::metadata(to_local(root, &copy)).map_err(fail)?;
-        let mut vv = VersionVector::new();
-        vv.bump(inner.my_num);
-        let entry = FileEntry {
-            path: copy.clone(),
-            size: c.entry.size,
-            mtime_ns: c.entry.mtime_ns,
-            hash: c.entry.hash.clone(),
-            vv,
-            deleted: false,
-            modified_by: c.entry.modified_by.clone(),
-        };
-        changed.push(entry.clone());
-        idx.put(LocalEntry { entry, disk: copy.clone(), disk_size: m.len(), disk_mtime_ns: crate::scanner::mtime_ns(&m) });
-        idx.entries.remove(&need.key);
-        conflict = Some(copy);
     }
-
-    let backup = if action == Action::Download && present.is_some() { fsops::backup_existing(root, &dest).map_err(fail)? } else { None };
     match fsops::install(root, temp, &dest, need.remote.mtime_ns) {
         Ok((size, mtime)) => {
             let mut entry = need.remote.clone();
@@ -727,8 +754,15 @@ fn place(inner: &Inner, folder: &FolderCtx, need: &Need, temp: &std::path::Path)
             Ok((changed, conflict))
         }
         Err(e) => {
+            // Se deshace: la versión local vuelve a su sitio y no queda en old/.
             if let Some(b) = backup {
                 let _ = std::fs::rename(b, to_local(root, &dest));
+            }
+            if let Some(p) = parked {
+                idx.entries.remove(&key_of(&p));
+                if let Some(c) = &cur {
+                    idx.put(c.clone());
+                }
             }
             Err(fail(e))
         }

@@ -14,6 +14,30 @@ use crate::pathsafe::{check_no_symlinks, to_local, META_DIR};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+/// Carpeta visible (y sincronizada) donde quedan las versiones anteriores.
+pub const OLD_DIR: &str = "old";
+
+/// ¿Está la ruta dentro de `old/`? Las versiones anteriores no generan a su
+/// vez versiones anteriores.
+pub fn is_in_old(rel: &str) -> bool {
+    rel.split('/').next().is_some_and(|c| c.eq_ignore_ascii_case(OLD_DIR))
+}
+
+/// Ruta en `old/` para la versión anterior de `rel`, con la fecha de esa
+/// versión (hora local): `old/Día 1/Ponencia (2026-11-04 15.20).pptx`.
+/// Es la misma en todos los equipos de una misma zona horaria, así que las
+/// copias que crea cada uno coinciden en lugar de duplicarse.
+pub fn old_version_name(rel: &str, mtime_ns: i64) -> String {
+    use chrono::{Local, TimeZone};
+    let (dir, stem, ext) = crate::pathsafe::split_name(rel);
+    let when = Local
+        .timestamp_opt(mtime_ns.div_euclid(1_000_000_000), 0)
+        .single()
+        .map(|t| t.format("%Y-%m-%d %H.%M").to_string())
+        .unwrap_or_else(|| "sin fecha".into());
+    format!("{OLD_DIR}/{dir}{stem} ({when}){ext}")
+}
+
 pub fn meta_dir(root: &Path) -> PathBuf {
     root.join(META_DIR)
 }
@@ -219,6 +243,14 @@ pub fn cleanup(root: &Path, versions_max_age: Duration, temp_max_age: Duration) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_names() {
+        assert!(is_in_old("old/x.pptx") && is_in_old("OLD/a/b") && !is_in_old("folder/old/x") && !is_in_old("older.pptx"));
+        let n = old_version_name("Día 1/Ponencia Final.pptx", 1_761_417_005_000_000_000);
+        assert!(n.starts_with("old/Día 1/Ponencia Final (2025-10-2") && n.ends_with(").pptx"), "{n}");
+        assert!(!n.contains(':'), "válido en Windows");
+    }
 
     #[test]
     fn stamp_format() {

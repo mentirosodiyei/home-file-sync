@@ -27,6 +27,7 @@ walkdir = "2"
 hex = "0.4"
 thiserror = "1"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }
@@ -36,6 +37,8 @@ tempfile = "3"
 filetime = "0.2"
 blake3 = "1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde_json = "1"
+tracing = "0.1"
 
 [features]
 # Solo Rust (sin C/ensamblador) en BLAKE3: útil para comprobar compilación cruzada.

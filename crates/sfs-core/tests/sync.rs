@@ -230,19 +230,100 @@ async fn updates_propagate_and_old_version_is_kept() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn deletions_do_not_propagate_and_do_not_come_back() {
+async fn deletions_propagate_to_everyone_and_go_to_trash() {
     let a = Node::new("A").await;
     let b = Node::new("B").await;
+    let c = Node::new("C").await;
     a.write("borrame.pptx", b"importante");
-    group(&a, &[&b]).await;
-    wait_for("en B", 30, || b.read("borrame.pptx").is_some()).await;
+    a.write("Dia 1/Sala A/ponencia.key", b"key");
+    a.write("Dia 1/Sala A/notas.pdf", b"pdf");
+    a.write("se queda.txt", b"ok");
+    group(&a, &[&b, &c]).await;
+    wait_for("todos completos", 30, || b.files().len() == 4 && c.files().len() == 4).await;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+
+    // Borrar un archivo en A lo borra en B y C.
     std::fs::remove_file(a.root().join("borrame.pptx")).unwrap();
-    tokio::time::sleep(Duration::from_secs(5)).await;
-    assert!(b.read("borrame.pptx").is_some(), "el borrado no debe propagarse");
-    assert!(a.read("borrame.pptx").is_none(), "no debe reaparecer en el equipo donde se borró");
-    // Pero si alguien publica una versión nueva, sí llega.
-    b.write("borrame.pptx", b"importante v2");
-    wait_for("v2 vuelve a A", 30, || a.read("borrame.pptx").as_deref() == Some(b"importante v2")).await;
+    wait_for("borrado en B y C", 30, || b.read("borrame.pptx").is_none() && c.read("borrame.pptx").is_none()).await;
+    // Se conserva en la papelera interna de quien lo recibe.
+    let trash = b.root().join(".showfilesync/papelera");
+    assert!(walk(&trash).iter().any(|p| std::fs::read(p).ok().as_deref() == Some(b"importante")), "copia en la papelera");
+
+    // Borrar una carpeta entera en B la borra en A y C, sin dejar carpetas vacías.
+    std::fs::remove_dir_all(b.root().join("Dia 1")).unwrap();
+    wait_for("carpeta borrada en A y C", 30, || !a.root().join("Dia 1").exists() && !c.root().join("Dia 1").exists()).await;
+
+    // Estable: nada reaparece y lo demás sigue.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    for n in [&a, &b, &c] {
+        assert_eq!(n.files(), vec![("se queda.txt".to_string(), b"ok".to_vec())]);
+    }
+    // Volver a crear un archivo borrado lo vuelve a sincronizar.
+    c.write("borrame.pptx", b"nueva");
+    wait_for("vuelve a A y B", 30, || a.read("borrame.pptx").as_deref() == Some(b"nueva") && b.read("borrame.pptx").as_deref() == Some(b"nueva")).await;
+}
+
+/// Si un equipo edita un archivo mientras otro lo borra, gana la edición.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn edit_wins_over_concurrent_deletion() {
+    let mut a = Node::new("A").await;
+    let mut b = Node::new("B").await;
+    a.write("guion.pptx", b"v1");
+    group(&a, &[&b]).await;
+    wait_for("en B", 30, || b.read("guion.pptx").is_some()).await;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    // Sin conexión entre ellos: A borra, B edita.
+    b.engine.shutdown().await;
+    std::fs::remove_file(a.root().join("guion.pptx")).unwrap();
+    wait_for("A registra el borrado", 20, || a.engine.snapshot().file_count == 0).await;
+    a.engine.shutdown().await;
+    b.restart("B", |_| {}).await;
+    b.write("guion.pptx", b"v2 editada en B");
+    wait_for("B registra la edición", 20, || b.engine.snapshot().file_count == 1 && b.engine.snapshot().total_bytes == 15).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    a.restart("A", |_| {}).await;
+    b.engine.connect_to(a.addr());
+    wait_for("la edición vuelve a A", 30, || a.read("guion.pptx").as_deref() == Some(b"v2 editada en B")).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(b.read("guion.pptx").as_deref(), Some(&b"v2 editada en B"[..]), "B no la pierde");
+}
+
+/// Renombrar o mover: el archivo aparece con el nombre nuevo sin volver a
+/// transferirse y desaparece con el antiguo.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn renames_are_mirrored_without_retransfer() {
+    let a = Node::new("A").await;
+    let b = Node::new("B").await;
+    let data = pseudo_random(3_000_000, 21);
+    a.write("Video ensayo.mov", &data);
+    group(&a, &[&b]).await;
+    wait_for("en B", 30, || b.read("Video ensayo.mov").is_some()).await;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let before = b.engine.stats().bytes_down;
+    std::fs::create_dir_all(a.root().join("Final")).unwrap();
+    std::fs::rename(a.root().join("Video ensayo.mov"), a.root().join("Final/Video definitivo.mov")).unwrap();
+    wait_for("renombrado en B", 30, || b.read("Final/Video definitivo.mov").as_deref() == Some(&data[..]) && b.read("Video ensayo.mov").is_none()).await;
+    assert_eq!(b.engine.stats().bytes_down, before, "se copia en local, no por la red");
+}
+
+/// Disco desmontado o carpeta sustituida (desaparece todo, incluida la
+/// carpeta interna): no se borra nada en los demás y se vuelve a llenar.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn emptied_folder_without_meta_is_not_propagated_as_deletion() {
+    let a = Node::new("A").await;
+    let b = Node::new("B").await;
+    a.write("presentacion.pptx", b"importante");
+    a.write("video.mp4", b"video");
+    group(&a, &[&b]).await;
+    wait_for("en B", 30, || b.files().len() == 2).await;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    for e in std::fs::read_dir(a.root()).unwrap().flatten() {
+        let p = e.path();
+        if p.is_dir() { std::fs::remove_dir_all(p).unwrap() } else { std::fs::remove_file(p).unwrap() }
+    }
+    wait_for("A se vuelve a llenar", 30, || a.files().len() == 2).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(b.files().len(), 2, "B no borra nada");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -411,7 +492,7 @@ async fn malicious_peer_cannot_escape_folder() {
     while Instant::now() < deadline && !got_err {
         match tokio::time::timeout(Duration::from_secs(5), h.reader.recv()).await {
             Ok(Ok(Msg::DlErr { id: 1, .. })) => got_err = true,
-            Ok(Ok(Msg::Block { .. })) => panic!("¡ha enviado datos!"),
+            Ok(Ok(Msg::Block { id: 1, .. })) => panic!("¡ha enviado datos del archivo pedido!"),
             Ok(Ok(Msg::DlOpenOk { .. })) => panic!("¡ha abierto un archivo fuera de la carpeta!"),
             Ok(Ok(_)) => {}
             _ => break,

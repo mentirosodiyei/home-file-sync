@@ -18,7 +18,8 @@ pub struct FileEntry {
     /// BLAKE3 del contenido, en hexadecimal.
     pub hash: String,
     pub vv: VersionVector,
-    /// Borrado localmente. Nunca se propaga: solo sirve para no volver a
+    /// Borrado. Es una versión más del archivo y se propaga a los demás
+    /// equipos (que lo mueven a su papelera interna); también sirve para no volver a
     /// descargar esa misma versión en el equipo donde se borró.
     pub deleted: bool,
     /// Nombre del equipo que hizo el último cambio (para nombrar conflictos).

@@ -12,7 +12,12 @@
       <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 0 1-13.7 5.6M4 12a8 8 0 0 1 13.7-5.6" /><path d="M18 3v4h-4M6 21v-4h4" /></svg>
       <span>SHOW FILE SYNC</span>
     </div>
-    <div id="overall" class="pill" hidden></div>
+    <div class="top-right">
+      <div id="overall" class="pill" hidden></div>
+      <button class="icon gear" data-action="settings" aria-label="Ajustes" title="Ajustes">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
+    </div>
   </header>
 
   <main>
@@ -40,10 +45,25 @@
           <p>Escribe el código que muestra uno de los equipos del grupo.</p>
           <div id="open-groups"></div>
           <form id="join-form" autocomplete="off">
-            <input id="code" class="code-input" inputmode="numeric" placeholder="0000 0000" maxlength="9" aria-label="Código de 8 cifras" />
-            <button class="primary" type="submit" id="join-btn">Unirse</button>
+            <details class="manual" id="manual">
+              <summary>Conexión manual</summary>
+              <p class="muted small">Úsala si el grupo no aparece automáticamente. Escribe la dirección del equipo que muestra el código.</p>
+              <div class="manual-grid">
+                <label>Dirección IP o nombre del equipo
+                  <input id="m-host" placeholder="192.168.1.66 o PORTATIL-SALON" spellcheck="false" autocapitalize="off" />
+                </label>
+                <label>Puerto
+                  <input id="m-port" inputmode="numeric" placeholder="47800" maxlength="5" />
+                </label>
+              </div>
+              <label class="check"><input type="checkbox" id="m-remember" /> Recordar esta dirección para reconectar</label>
+            </details>
+            <div class="join-row">
+              <input id="code" class="code-input" inputmode="numeric" placeholder="0000 0000" maxlength="9" aria-label="Código de 8 cifras" />
+              <button class="primary" type="submit" id="join-btn">Unirse</button>
+            </div>
           </form>
-          <p class="error" id="join-error" hidden></p>
+          <div class="error" id="join-error" hidden></div>
         </div>
       </div>
       <p class="hint" data-bind="networkWarning" hidden></p>
@@ -98,11 +118,53 @@
     <div class="menu">
       <button class="icon" id="menu-btn" aria-label="Más opciones">⋯</button>
       <div class="menu-pop" id="menu" hidden>
+        <button data-action="settings">Ajustes y diagnóstico</button>
         <button data-action="rename">Cambiar nombre de este equipo</button>
         <button data-action="leave" class="danger">Salir del grupo</button>
       </div>
     </div>
   </footer>
+
+  <!-- Ajustes -->
+  <div class="sheet" id="settings" hidden>
+    <div class="sheet-head">
+      <h2>Ajustes</h2>
+      <div class="tabs" role="tablist">
+        <button role="tab" data-tab="general" class="active">General</button>
+        <button role="tab" data-tab="advanced">Avanzado</button>
+      </div>
+      <button class="link" data-action="close-settings">Cerrar</button>
+    </div>
+
+    <section class="tab" id="tab-general">
+      <div class="row-item"><div><b>Nombre de este equipo</b><div class="muted small" data-bind="deviceName"></div></div><button class="secondary" data-action="rename">Cambiar</button></div>
+      <div class="row-item"><div><b>Direcciones manuales guardadas</b><div class="muted small" id="remembered">Ninguna</div></div><button class="secondary" data-action="forget" id="forget-btn" hidden>Olvidar</button></div>
+      <div class="row-item" id="leave-row"><div><b>Grupo</b><div class="muted small" data-bind="groupName"></div></div><button class="secondary danger-text" data-action="leave">Salir del grupo</button></div>
+    </section>
+
+    <section class="tab" id="tab-advanced" hidden>
+      <h3 class="first">Diagnóstico</h3>
+      <p class="muted small">Registro de descubrimiento, conexiones, errores y sincronización. No incluye códigos de unión, claves ni el contenido de los archivos.</p>
+      <div class="log-tools">
+        <select id="log-level" aria-label="Nivel">
+          <option value="INFO">Información y superior</option>
+          <option value="WARN">Avisos y errores</option>
+          <option value="ERROR">Solo errores</option>
+          <option value="DEBUG">Todo (incluye depuración)</option>
+        </select>
+        <input id="log-query" type="search" placeholder="Filtrar…" spellcheck="false" />
+      </div>
+      <div class="log-tools">
+        <label class="check"><input type="checkbox" id="log-debug" /> Registro detallado (DEBUG)</label>
+        <span class="spacer-flex"></span>
+        <button class="secondary" data-action="copy-logs">Copiar</button>
+        <button class="secondary" data-action="export-logs">Exportar…</button>
+        <button class="secondary" data-action="open-logs">Carpeta</button>
+      </div>
+      <pre class="log" id="log" tabindex="0"></pre>
+      <p class="muted small" id="log-status"></p>
+    </section>
+  </div>
 
   <dialog id="dialog">
     <form method="dialog">

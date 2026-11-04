@@ -26,8 +26,42 @@ No usa internet ni ningún servidor externo.
   - En **macOS**, revisa *Ajustes del Sistema → Red → Firewall* y *Privacidad y seguridad → Red local*: Show File Sync debe estar permitido.
 - Algunas redes permiten el descubrimiento pero bloquean las conexiones entre clientes. Hay que usar otra red.
 
+**«macOS está bloqueando las conexiones de Show File Sync hacia la red local»**
+- macOS exige el permiso **Red local** para que una app *inicie* conexiones hacia otros equipos de la red. Aceptar conexiones entrantes no lo necesita. Por eso, sin el permiso, otros equipos pueden unirse al Mac pero el Mac no puede unirse a ellos.
+- El síntoma es el error del sistema `No route to host (os error 65)` hacia una dirección de la propia subred, aunque `ping` o `nc` funcionen desde Terminal (Terminal tiene su propio permiso).
+- Solución: *Ajustes del Sistema → Privacidad y seguridad → Red local* y activa Show File Sync. Si ya estaba activado, desactívalo, vuelve a activarlo y reinicia la app.
+- macOS asocia el permiso a la **firma** de la app. Las versiones hasta la 0.1.0 solo llevaban la firma automática del enlazador, cuyo identificador cambiaba en cada compilación, así que el permiso podía no aplicarse aunque apareciera activado. Desde la 0.1.1 la app va firmada como paquete con el identificador estable `org.showfilesync.app` (ver `scripts/compilar-macos.sh`).
+
 **«Este equipo no tiene conexión a una red local»**
 - No hay ninguna interfaz con IPv4. Conecta el cable o la wifi.
+
+## Si el descubrimiento no funciona
+
+Show File Sync no depende solo del descubrimiento:
+- Recuerda por dónde ha alcanzado a cada equipo del grupo, así que reconecta tras un reinicio aunque la red bloquee mDNS y broadcast.
+- Los equipos se comunican entre sí las direcciones de los demás miembros: basta con que un equipo vea a otro para que todos acaben conectados.
+
+## Conexión manual (recuperación)
+
+Es una herramienta de recuperación para el primer contacto cuando el descubrimiento no funciona (multicast o broadcast bloqueados, VLAN distintas). En «Unirse a un grupo» abre **Conexión manual**:
+- Escribe la IP o el nombre del equipo que muestra el código. Acepta IPv4, IPv6 o nombre, con `:puerto` opcional.
+- El puerto por defecto es 47800.
+- El código de 8 cifras sigue siendo obligatorio: la autenticación y el cifrado son los mismos que en la conexión automática.
+- La dirección solo se guarda si marcas «Recordar esta dirección». Se puede olvidar en *Ajustes → General*.
+- Cada unión manual queda anotada en el registro de diagnóstico con el motivo por el que no funcionó la automática. Si necesitas usarla, exporta el registro y compártelo: sirve para mejorar la detección automática.
+
+## Registro de diagnóstico
+
+*Ajustes (icono ⚙) → Avanzado → Diagnóstico* muestra:
+- los equipos descubiertos, con qué direcciones y por qué vía (mDNS o baliza, con la IP de origen del paquete);
+- cada intento de conexión, con la dirección, el puerto, la interfaz local, la fase (TCP, cifrado, autenticación, emparejamiento) y el error original del sistema;
+- desconexiones y operaciones de sincronización.
+
+Se puede filtrar por nivel o texto, copiar y exportar a un archivo para enviarlo. El registro detallado (DEBUG) se activa ahí mismo.
+
+El registro nunca guarda códigos de unión, claves ni el contenido de los archivos. Los archivos están en `<datos de la app>/logs`:
+- máximo 5 archivos de 2 MB;
+- rotación automática.
 
 ## Recomendaciones para producción
 

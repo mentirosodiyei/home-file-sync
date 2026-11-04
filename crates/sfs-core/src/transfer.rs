@@ -118,6 +118,7 @@ impl Uploads {
             return reply(Msg::DlErr { id, msg: "archivo no disponible".into() });
         };
         let tid = add_transfer(&inner, &path, &self.peer_name, false, size, 0);
+        tracing::info!("Envío de «{path}» ({size} bytes) a «{}»", self.peer_name);
         let guard = UploadGuard { inner: inner.clone(), tid };
         let (tx, mut rx) = mpsc::unbounded_channel::<(u64, u32)>();
         self.sessions.insert(id, tx);
@@ -208,7 +209,7 @@ pub(crate) struct Need {
 }
 
 /// Calcula qué falta. Aplica en el momento las fusiones de versión (sin datos).
-fn plan(inner: &Inner, folder: &FolderCtx) -> Vec<Need> {
+fn plan(inner: &Inner, folder: &FolderCtx) -> (Vec<Need>, Vec<Need>) {
     let mut best: HashMap<String, (FileEntry, Vec<String>)> = HashMap::new();
     {
         let peers = inner.peers.lock().unwrap();
@@ -217,15 +218,13 @@ fn plan(inner: &Inner, folder: &FolderCtx) -> Vec<Need> {
                 continue;
             }
             for (k, e) in &p.index {
-                if e.deleted {
-                    continue;
-                }
+                let src = if e.deleted { vec![] } else { vec![pid.clone()] };
                 match best.get_mut(k) {
                     None => {
-                        best.insert(k.clone(), (e.clone(), vec![pid.clone()]));
+                        best.insert(k.clone(), (e.clone(), src));
                     }
                     Some((b, srcs)) => {
-                        if e.hash == b.hash {
+                        if e.hash == b.hash && e.deleted == b.deleted {
                             srcs.push(pid.clone());
                             if better(e, b) {
                                 let vv = b.vv.clone();
@@ -236,7 +235,7 @@ fn plan(inner: &Inner, folder: &FolderCtx) -> Vec<Need> {
                             }
                         } else if better(e, b) {
                             *b = e.clone();
-                            *srcs = vec![pid.clone()];
+                            *srcs = src;
                         }
                     }
                 }
@@ -244,6 +243,7 @@ fn plan(inner: &Inner, folder: &FolderCtx) -> Vec<Need> {
         }
     }
     let mut needs = Vec::new();
+    let mut deletes = Vec::new();
     let mut merged = Vec::new();
     {
         let mut idx = folder.index.lock().unwrap();
@@ -259,6 +259,10 @@ fn plan(inner: &Inner, folder: &FolderCtx) -> Vec<Need> {
                     }
                 }
                 Action::Download | Action::DownloadConflict => needs.push(Need { key: k, remote, sources }),
+                Action::Delete => deletes.push(Need { key: k, remote, sources }),
+                Action::AdoptTombstone => {
+                    idx.put(LocalEntry { entry: remote, disk: String::new(), disk_size: 0, disk_mtime_ns: 0 });
+                }
             }
         }
     }
@@ -266,7 +270,41 @@ fn plan(inner: &Inner, folder: &FolderCtx) -> Vec<Need> {
         inner.broadcast_entries(merged);
     }
     needs.sort_by(|a, b| a.remote.size.cmp(&b.remote.size).then_with(|| a.remote.path.cmp(&b.remote.path)));
-    needs
+    (needs, deletes)
+}
+
+/// Aplica un borrado recibido: mueve el archivo a la papelera interna y
+/// registra el borrado con la versión remota. Comprueba antes que el archivo
+/// local no ha cambiado desde que se decidió (si cambió, gana la edición).
+fn apply_delete(inner: &Inner, folder: &FolderCtx, need: &Need) -> Result<FileEntry, String> {
+    let root = &folder.root;
+    let mut idx = folder.index.lock().unwrap();
+    let cur = idx.get(&need.key).cloned().ok_or("ya no está en el índice")?;
+    if decide(Some(&cur.entry), &need.remote) != Action::Delete {
+        return Err("el estado local cambió".into());
+    }
+    let m = std::fs::metadata(to_local(root, &cur.disk)).ok();
+    if m.as_ref().map(|m| (m.len(), crate::scanner::mtime_ns(m))) != Some((cur.disk_size, cur.disk_mtime_ns)) {
+        folder.request_scan();
+        return Err("el archivo se ha modificado aquí; se conserva".into());
+    }
+    let trashed = fsops::move_to_trash(root, &cur.disk).map_err(|e| {
+        if is_locked(&e) {
+            "el archivo está abierto en otra aplicación; se eliminará cuando se cierre".to_string()
+        } else {
+            format!("no se puede eliminar: {e}")
+        }
+    })?;
+    fsops::remove_empty_parents(root, &cur.disk);
+    {
+        let mut t = inner.recent_trash.lock().unwrap();
+        t.retain(|_, (_, _, when)| when.elapsed() < Duration::from_secs(600));
+        t.insert(cur.entry.hash.clone(), (trashed, cur.entry.size, Instant::now()));
+    }
+    let mut entry = need.remote.clone();
+    entry.vv.merge(&cur.entry.vv);
+    idx.put(LocalEntry { entry: entry.clone(), disk: String::new(), disk_size: 0, disk_mtime_ns: 0 });
+    Ok(entry)
 }
 
 pub(crate) async fn scheduler_loop(inner: Arc<Inner>) {
@@ -279,8 +317,31 @@ pub(crate) async fn scheduler_loop(inner: Arc<Inner>) {
         if inner.group().is_none() || !folder.scanned_once.load(Ordering::SeqCst) || folder.root_error.lock().unwrap().is_some() {
             continue;
         }
-        let needs = plan(&inner, &folder);
+        let (needs, deletes) = plan(&inner, &folder);
         let now = Instant::now();
+        // Borrados: si el mismo contenido hace falta para una descarga pendiente
+        // (archivo renombrado o movido), se espera a que se copie en local.
+        let wanted: std::collections::HashSet<String> = needs.iter().map(|n| n.remote.hash.clone()).collect();
+        let mut done = Vec::new();
+        for d in deletes {
+            let local_hash = folder.index.lock().unwrap().get(&d.key).map(|l| l.entry.hash.clone());
+            if local_hash.is_some_and(|h| wanted.contains(&h)) {
+                continue;
+            }
+            if inner.activity.lock().unwrap().errors.get(&d.key).is_some_and(|e| e.retry_at > now) {
+                continue;
+            }
+            let (i, f, dd) = (inner.clone(), folder.clone(), d.clone());
+            match tokio::task::spawn_blocking(move || apply_delete(&i, &f, &dd)).await {
+                Ok(Ok(entry)) => {
+                    inner.event("delete", format!("Eliminado {} (borrado en «{}»; copia en la papelera interna)", d.remote.path, d.remote.modified_by));
+                    done.push(entry);
+                }
+                Ok(Err(msg)) => set_error(&inner, &d, msg, Duration::from_secs(10), true),
+                Err(_) => {}
+            }
+        }
+        inner.broadcast_entries(done);
         {
             let mut a = inner.activity.lock().unwrap();
             // Olvidamos errores de archivos que ya no hacen falta.
@@ -303,6 +364,13 @@ pub(crate) async fn scheduler_loop(inner: Arc<Inner>) {
                 set_error(&inner, &need, msg, Duration::from_secs(600), true);
                 continue;
             }
+            // Si en disco hay algo que el índice aún no refleja (archivo recién
+            // copiado o editado que el escáner está esperando a que se estabilice),
+            // se espera: puede ser el mismo contenido y no hace falta transferirlo.
+            if pending_local_change(&folder, &need) {
+                folder.request_scan();
+                continue;
+            }
             inner.active_downloads.lock().unwrap().insert(need.key.clone(), need.remote.hash.clone());
             let i = inner.clone();
             let f = folder.clone();
@@ -312,6 +380,17 @@ pub(crate) async fn scheduler_loop(inner: Arc<Inner>) {
                 i.active_downloads.lock().unwrap().remove(&key);
                 i.wake.notify_one();
             });
+        }
+    }
+}
+
+fn pending_local_change(folder: &FolderCtx, need: &Need) -> bool {
+    let idx = folder.index.lock().unwrap();
+    match idx.get(&need.key).filter(|l| !l.entry.deleted) {
+        None => to_local(&folder.root, &need.remote.path).exists(),
+        Some(l) => {
+            let m = std::fs::metadata(to_local(&folder.root, &l.disk)).ok();
+            m.map(|m| (m.len(), crate::scanner::mtime_ns(&m))) != Some((l.disk_size, l.disk_mtime_ns))
         }
     }
 }
@@ -346,6 +425,13 @@ async fn download_job(inner: Arc<Inner>, folder: Arc<FolderCtx>, need: Need) {
     let temp = fsops::temp_path(&folder.root, &need.remote.hash);
     let already = std::fs::metadata(&temp).map(|m| m.len()).unwrap_or(0).min(need.remote.size);
     let tid = add_transfer(&inner, &need.remote.path, &first_peer, true, need.remote.size, already);
+    tracing::info!(
+        "Descarga de «{}» ({} bytes, {} fuente(s)){}",
+        need.remote.path,
+        need.remote.size,
+        need.sources.len(),
+        if already > 0 { format!(", reanudando desde {already} bytes") } else { String::new() }
+    );
     let result = download(&inner, &folder, &need, tid).await;
     remove_transfer(&inner, tid);
     match result {
@@ -368,7 +454,10 @@ async fn download_job(inner: Arc<Inner>, folder: Arc<FolderCtx>, need: Need) {
             folder.request_scan();
             set_error(&inner, &need, "cambió en este equipo; se vuelve a evaluar".into(), Duration::from_secs(3), false);
         }
-        Err(DlError::Fail(msg)) => set_error(&inner, &need, msg, Duration::from_secs(5), true),
+        Err(DlError::Fail(msg)) => {
+            tracing::warn!("Descarga de «{}» fallida: {msg}", need.remote.path);
+            set_error(&inner, &need, msg, Duration::from_secs(5), true)
+        }
     }
 }
 
@@ -381,7 +470,22 @@ async fn download(inner: &Arc<Inner>, folder: &Arc<FolderCtx>, need: &Need, tid:
         idx.find_by_hash(&need.remote.hash).map(|le| (to_local(&folder.root, &le.disk), le.disk_size, le.disk_mtime_ns))
     };
     let mut have_data = false;
-    if let Some((src, size, mtime)) = local_src {
+    // ¿Acaba de ir a la papelera con otro nombre? (renombrado o movido)
+    let trashed = inner.recent_trash.lock().unwrap().remove(&need.remote.hash);
+    if let Some((src, size, _)) = trashed {
+        let t = temp.clone();
+        let ok = tokio::task::spawn_blocking(move || {
+            std::fs::metadata(&src).is_ok_and(|m| m.len() == size) && std::fs::rename(&src, &t).is_ok()
+        })
+        .await
+        .unwrap_or(false);
+        if ok {
+            have_data = true;
+            inner.stats.lock().unwrap().local_copies += 1;
+            tracing::info!("«{}» recuperado de la papelera interna (renombrado o movido): sin transferencia", need.remote.path);
+        }
+    }
+    if let (false, Some((src, size, mtime))) = (have_data, local_src) {
         let t = temp.clone();
         let ok = tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
             let m = std::fs::metadata(&src)?;

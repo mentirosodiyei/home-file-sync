@@ -84,10 +84,77 @@ pub struct PeerStatus {
     pub uploads: u32,
 }
 
+// ---------------------------------------------------------------------------
+// Extensiones compatibles con versiones anteriores
+// ---------------------------------------------------------------------------
+
+/// Identificador reservado de `Block` para mensajes de extensión.
+///
+/// Los equipos con versiones anteriores enrutan cada `Block` por su id de
+/// descarga y descartan en silencio los que no reconocen, así que pueden
+/// recibir extensiones sin romper la sesión. Los ids de descarga reales
+/// empiezan en 1 y nunca llegan a este valor.
+pub const EXT_CHANNEL: u32 = u32::MAX;
+/// Versión de las extensiones que entiende este equipo.
+pub const EXT_VERSION: u32 = 1;
+/// Límites de lo que se acepta de otro equipo.
+pub const EXT_MAX_ADDRS: usize = 8;
+pub const EXT_MAX_MEMBERS: usize = 64;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Ext {
+    /// Datos del propio equipo: puerto de escucha y sus direcciones.
+    Caps { version: u32, listen_port: u16, addrs: Vec<String> },
+    /// Otros miembros del grupo conectados al emisor y direcciones por las
+    /// que se les ha alcanzado. Permite conectar directamente aunque el
+    /// descubrimiento no funcione entre algunos equipos.
+    Members { members: Vec<MemberAddrs> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemberAddrs {
+    pub id: String,
+    pub name: String,
+    pub addrs: Vec<String>,
+}
+
+impl Ext {
+    pub fn to_msg(&self) -> Msg {
+        Msg::Block { id: EXT_CHANNEL, offset: 0, data: postcard::to_allocvec(self).expect("serialización de extensión") }
+    }
+
+    /// Decodifica una extensión. Las de versiones futuras que no se entienden se ignoran.
+    pub fn from_block(data: &[u8]) -> Option<Ext> {
+        postcard::from_bytes(data).ok()
+    }
+}
+
 pub fn encode(m: &Msg) -> Vec<u8> {
     postcard::to_allocvec(m).expect("serialización de mensaje")
 }
 
 pub fn decode(b: &[u8]) -> Result<Msg, postcard::Error> {
     postcard::from_bytes(b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extensions_travel_as_blocks() {
+        let e = Ext::Members {
+            members: vec![MemberAddrs { id: "a".repeat(32), name: "PC Sala 1".into(), addrs: vec!["192.168.1.66:47800".into()] }],
+        };
+        let wire = encode(&e.to_msg());
+        // Un equipo antiguo solo ve un Block con un id que no reconoce.
+        match decode(&wire).unwrap() {
+            Msg::Block { id, data, .. } => {
+                assert_eq!(id, EXT_CHANNEL);
+                assert_eq!(Ext::from_block(&data), Some(e));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(Ext::from_block(&[0xff, 0xff, 0x01]), None, "lo desconocido se ignora");
+    }
 }

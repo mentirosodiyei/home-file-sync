@@ -35,6 +35,10 @@ pub struct ScanOutcome {
     /// Marcas de borrado nuevas: se anuncian para que nadie pida el archivo a
     /// este equipo (los demás nunca borran por ello).
     pub tombstones: Vec<FileEntry>,
+    /// La carpeta interna `.showfilesync` ha desaparecido: la carpeta se ha
+    /// sustituido o el disco se ha desmontado dejando el punto de montaje
+    /// vacío. No se interpreta como borrado de los archivos.
+    pub meta_missing: bool,
 }
 
 #[derive(Debug)]
@@ -75,15 +79,45 @@ fn finder_busy(meta: &std::fs::Metadata) -> bool {
 
 /// Abre un archivo para calcular su hash. En Windows falla si otro proceso
 /// lo tiene abierto para escritura (copia en curso, guardado a medias).
+///
+/// Excepción: un documento abierto en PowerPoint, Word o Excel. Office lo
+/// mantiene abierto mientras se edita, pero guarda escribiendo un temporal y
+/// renombrándolo, así que el contenido es coherente: si existe su archivo de
+/// bloqueo `~$…`, se lee compartido para detectar lo guardado sin esperar a
+/// que se cierre la presentación.
 fn open_for_hash(path: &Path) -> std::io::Result<std::fs::File> {
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
         const FILE_SHARE_READ: u32 = 1;
-        std::fs::OpenOptions::new().read(true).share_mode(FILE_SHARE_READ).open(path)
+        const ALL_SHARE: u32 = 7; // lectura | escritura | borrado
+        match std::fs::OpenOptions::new().read(true).share_mode(FILE_SHARE_READ).open(path) {
+            Err(e) if e.raw_os_error() == Some(32) && office_lock_exists(path) => {
+                std::fs::OpenOptions::new().read(true).share_mode(ALL_SHARE).open(path)
+            }
+            r => r,
+        }
     }
     #[cfg(not(windows))]
     std::fs::File::open(path)
+}
+
+/// ¿Tiene este documento un archivo de bloqueo de Office (`~$…`) en su carpeta?
+/// PowerPoint y Excel usan `~$` + nombre completo; Word, `~$` + nombre sin los
+/// dos primeros caracteres.
+pub fn office_lock_exists(path: &Path) -> bool {
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name().and_then(|n| n.to_str())) else { return false };
+    let name = name.to_lowercase();
+    std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.flatten().any(|e| {
+                e.file_name()
+                    .to_str()
+                    .and_then(|n| n.strip_prefix("~$"))
+                    .is_some_and(|rest| rest.len() >= 3 && name.ends_with(&rest.to_lowercase()))
+            })
+        })
+        .unwrap_or(false)
 }
 
 /// Hash BLAKE3 en hexadecimal de todo el archivo.
@@ -149,6 +183,10 @@ impl Scanner {
             out.errors.push((String::new(), "La carpeta sincronizada no está disponible".into()));
             return out;
         }
+        if !self.root.join(META_DIR).is_dir() {
+            out.meta_missing = true;
+            return out;
+        }
         let (files, complete) = self.walk();
 
         // Fase 1: qué ha cambiado respecto al índice (bloqueo breve).
@@ -178,6 +216,8 @@ impl Scanner {
                 for k in gone {
                     if let Some(le) = idx.entries.get_mut(&k) {
                         le.entry.deleted = true;
+                        le.entry.vv.bump(me.num);
+                        le.entry.modified_by = me.name.clone();
                         out.tombstoned += 1;
                         out.tombstones.push(le.entry.clone());
                     }
@@ -239,6 +279,8 @@ impl Scanner {
                     let was_deleted = e.deleted;
                     e.deleted = false;
                     if was_deleted {
+                        e.vv.bump(me.num);
+                        e.modified_by = me.name.clone();
                         out.changed.push(e.clone());
                     }
                     e
@@ -282,6 +324,7 @@ mod tests {
     fn detects_new_modified_deleted_and_waits_for_stability() {
         let t = tempfile::tempdir().unwrap();
         let root = t.path().to_path_buf();
+        std::fs::create_dir_all(root.join(META_DIR)).unwrap();
         std::fs::create_dir_all(root.join("sub dir")).unwrap();
         std::fs::write(root.join("sub dir/Ñandú.pptx"), b"hola").unwrap();
         std::fs::write(root.join(".DS_Store"), b"x").unwrap();
@@ -318,9 +361,44 @@ mod tests {
     }
 
     #[test]
+    fn detects_office_lock_files() {
+        let t = tempfile::tempdir().unwrap();
+        let ppt = t.path().join("Ponencia Final.pptx");
+        std::fs::write(&ppt, b"x").unwrap();
+        assert!(!office_lock_exists(&ppt));
+        std::fs::write(t.path().join("~$Ponencia Final.pptx"), b"lock").unwrap();
+        assert!(office_lock_exists(&ppt));
+        let doc = t.path().join("Guion.docx");
+        std::fs::write(&doc, b"x").unwrap();
+        std::fs::write(t.path().join("~$ion.docx"), b"lock").unwrap(); // estilo Word
+        assert!(office_lock_exists(&doc));
+        assert!(!office_lock_exists(&t.path().join("Otra.pptx")));
+    }
+
+    #[test]
+    fn missing_meta_dir_is_not_a_mass_deletion() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().to_path_buf();
+        std::fs::create_dir_all(root.join(META_DIR)).unwrap();
+        std::fs::write(root.join("a.pptx"), b"a").unwrap();
+        let idx = Mutex::new(LocalIndex::default());
+        let mut s = Scanner::new(root.clone(), Duration::from_millis(0));
+        s.scan(&idx, &me());
+        s.scan(&idx, &me());
+        assert_eq!(idx.lock().unwrap().present().len(), 1);
+        // Disco desmontado: el punto de montaje queda vacío.
+        std::fs::remove_dir_all(root.join(META_DIR)).unwrap();
+        std::fs::remove_file(root.join("a.pptx")).unwrap();
+        let o = s.scan(&idx, &me());
+        assert!(o.meta_missing && o.tombstones.is_empty());
+        assert_eq!(idx.lock().unwrap().present().len(), 1, "no se marca nada como borrado");
+    }
+
+    #[test]
     fn growing_file_is_not_indexed() {
         let t = tempfile::tempdir().unwrap();
         let root = t.path().to_path_buf();
+        std::fs::create_dir_all(root.join(META_DIR)).unwrap();
         let idx = Mutex::new(LocalIndex::default());
         let mut s = Scanner::new(root.clone(), Duration::from_millis(0));
         for i in 0..4 {

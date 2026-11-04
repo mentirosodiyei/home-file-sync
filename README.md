@@ -27,7 +27,10 @@ Al cerrar la ventana, Show File Sync sigue funcionando en la **bandeja del siste
 - **No se pierden archivos.**
   - Si dos equipos tienen versiones distintas del mismo archivo, se conservan ambas: la otra queda como `Nombre (conflicto - Equipo - abc123).pptx`.
   - Cuando llega una versión nueva, la anterior se guarda 14 días en `.showfilesync/versiones`.
-- **Los borrados no se propagan.** Si alguien borra un archivo por error, sigue en los demás equipos. Tampoco reaparece en el equipo donde se borró, salvo que alguien publique una versión nueva.
+- **Las carpetas funcionan como una sola.** Lo que se añade, edita, renombra o borra en un equipo se replica en todos.
+  - Un archivo borrado no se destruye en los demás equipos: se mueve a su carpeta oculta `.showfilesync/papelera` y se conserva 14 días, por si se borró por error.
+  - Si un equipo edita un archivo mientras otro lo borra, gana la edición.
+  - Si un disco se desconecta, o la carpeta se sustituye por otra vacía, no se borra nada en los demás: la carpeta se vuelve a llenar.
 - **Nada a medias.**
   - No se copian archivos que todavía se están escribiendo.
   - Las descargas van a un temporal y solo se colocan, con un renombrado atómico, cuando el hash BLAKE3 coincide.
@@ -43,6 +46,10 @@ Detalles en [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md).
 ## Requisitos de red
 
 Todos los equipos deben estar en la **misma red local**. Funciona sin internet, incluso en una red completamente aislada.
+
+En **macOS** hay que permitir el acceso a la **Red local** cuando el sistema lo pida (*Ajustes del Sistema → Privacidad y seguridad → Red local*). Sin ese permiso, el Mac no puede unirse a grupos de otros equipos.
+
+Si el grupo no aparece automáticamente, usa **Conexión manual** en «Unirse a un grupo», escribiendo la IP del otro equipo. Para cualquier problema, *Ajustes (⚙) → Avanzado → Diagnóstico* muestra el registro detallado de conexiones.
 
 Algunas redes wifi de hoteles y recintos tienen **aislamiento de clientes**, que impide que los equipos se vean entre sí. Show File Sync lo indica en pantalla; en ese caso usa una red de producción propia o un switch. Más detalles en [docs/RED.md](docs/RED.md).
 
@@ -73,8 +80,10 @@ cargo run -p show-file-sync
 ```
 
 ```bash
-cd app/src-tauri && npx @tauri-apps/cli@2 build --target universal-apple-darwin
+scripts/compilar-macos.sh
 ```
+
+Este script compila la versión universal y la firma con la identidad de Apple del llavero, si la hay. La firma es necesaria para que el permiso «Red local» de macOS funcione de forma fiable.
 
 En Windows, `npx @tauri-apps/cli@2 build` genera el instalador NSIS. La CI (`.github/workflows/build.yml`) compila y prueba en Windows y macOS en cada cambio.
 

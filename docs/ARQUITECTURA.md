@@ -55,6 +55,8 @@ transferencia por bloques con verificación por hash.
 | `discovery` | mDNS/DNS-SD y baliza UDP. |
 | `peer` | Conexiones: autenticación, emparejamiento y sesión. |
 | `transfer` | Planificador, descargas por bloques, subidas y colocación atómica. |
+| `netpath` | Orden de direcciones candidatas, conexión TCP escalonada, fases y errores comprensibles. Único punto de conexión saliente, para el modo automático y el manual. |
+| `diag` | Registro de diagnóstico persistente: capa de `tracing`, memoria acotada y archivo rotativo. |
 | `fsops` | Temporales, `rename` atómico, versiones anteriores y limpieza. |
 | `engine` | Orquesta todo y genera el estado para la interfaz. |
 
@@ -64,7 +66,25 @@ transferencia por bloques con verificación por hash.
 - **Baliza UDP**: cada 3 s se envía un JSON con lo mismo por broadcast al puerto 47801, tanto a `255.255.255.255` como a la dirección de broadcast de cada interfaz. Sirve de respaldo cuando mDNS falla, por ejemplo con conflictos con otros respondedores mDNS en Windows o con switches que filtran multicast.
 - Lo anunciado **no es secreto ni sirve para autenticar**: solo indica a quién conectar.
 - Si dos equipos del grupo se ven, conecta primero el de id menor. El otro conecta también si a los 6 s no hay conexión, por si un cortafuegos solo deja pasar en un sentido. Si llegan a abrirse dos conexiones, ambos lados conservan la iniciada por el id menor.
-- La aplicación avisa claramente en tres casos:
+- **Elección de dirección** (`netpath`). Un equipo puede anunciar varias direcciones: Ethernet, wifi, VPN, adaptadores virtuales de Hyper-V/VirtualBox, IPv6.
+  - Las candidatas se ordenan así:
+    1. misma subred que una interfaz local;
+    2. otras redes privadas;
+    3. enlace local (169.254.x.x) al final.
+  - A igualdad, se prefiere la dirección de origen real de la baliza, que tiene camino de vuelta probado, frente a la anunciada por mDNS.
+  - Se conecta de forma escalonada: cada 350 ms se lanza la siguiente candidata, cada intento espera como máximo 4 s y gana la primera que responde.
+  - Si TCP conecta pero falla el cifrado (otro servicio en ese puerto), se prueba la siguiente.
+  - Un **rechazo** del otro equipo (código incorrecto, otro grupo) es definitivo: no se reintenta en otras direcciones para no gastar intentos del código.
+- **Direcciones aprendidas.** Cada equipo recuerda por qué direcciones ha alcanzado a cada miembro del grupo y las guarda en `settings.json` (`peer_addrs`). Así reconecta tras un reinicio aunque el descubrimiento no funcione en la red.
+  - Proceden de conexiones salientes que funcionaron, del origen de las conexiones entrantes y de lo que comunica cada equipo.
+  - Las direcciones escritas a mano en la conexión manual no se guardan salvo que el usuario lo pida.
+- **Miembros comunicados por el grupo.** Al conectar, cada equipo envía su puerto y sus direcciones, y después las de los demás miembros a los que está conectado. Un equipo que solo ve a uno de los miembros conecta directamente con los demás, sin conexión manual.
+  - Esa información solo aporta *dónde intentarlo*: toda conexión exige la autenticación del grupo, así que una dirección errónea no da acceso a nada.
+- **Compatibilidad hacia atrás.** Estos mensajes viajan como `Block` con el id reservado `EXT_CHANNEL` (`u32::MAX`). Las versiones 0.1.0 y 0.1.1 descartan en silencio los bloques que no reconocen, así que siguen funcionando con equipos nuevos; `scripts/prueba-compatibilidad.sh` lo verifica.
+- **La conexión manual es solo de recuperación.** Cada unión manual que funciona deja en el registro por qué no lo consiguió la automática: equipo no descubierto, descubierto con otras direcciones, o sin código abierto. Así cada uso real señala qué mejorar.
+- IPv4 e IPv6: se escucha en ambas y se aceptan direcciones IPv6 no de enlace local. Las de enlace local necesitan identificador de zona y se descartan.
+- La aplicación avisa claramente en cuatro casos:
+  - **macOS deniega el permiso «Red local»:** se detecta como `EHOSTUNREACH` hacia una dirección de la propia subred.
   - **Hay equipos detectados pero no se puede conectar con ellos:** cortafuegos o aislamiento de clientes.
   - **No se detecta ningún equipo del grupo a los 20 s:** la red no deja que los equipos se vean.
   - **No hay red local.**
@@ -100,14 +120,16 @@ Cada archivo tiene una entrada con estos campos: ruta (NFC, `/`), tamaño,
 
 | Situación | Acción |
 |---|---|
-| La remota está borrada | Nada (los borrados no se propagan). |
+| La remota es un borrado posterior a la versión local | Eliminar: el archivo se mueve a `.showfilesync/papelera/<fecha>/` (14 días). |
+| La remota es un borrado y aquí no existe | Registrar el borrado, para no recibir el archivo de un equipo con una versión antigua. |
+| La remota es un borrado concurrente con una edición local | Nada: gana la edición, que después llega al equipo que borró. |
 | No existe aquí | Descargar. |
 | Mismo hash | Fusionar vectores. No se transfiere nada. |
 | Remota posterior | Descargar. La versión local se mueve a `.showfilesync/versiones/<fecha>/`. |
 | Local posterior | Nada: el otro equipo la pedirá. |
 | Independientes (concurrentes) | **Conflicto**. |
-| Borrada aquí y la remota es la misma versión | Nada: no reaparece. |
-| Borrada aquí y la remota es posterior | Descargar, porque alguien publicó una versión nueva. |
+| Borrada aquí y la remota es la versión anterior al borrado | Nada. |
+| Borrada aquí y la remota es posterior o una edición concurrente | Descargar. |
 
 - **Conflicto.**
   - Gana la versión con `mtime` mayor; si empatan, el hash mayor. Es determinista, así que todos los equipos eligen la misma.
@@ -124,15 +146,18 @@ Cada archivo tiene una entrada con estos campos: ruta (NFC, `/`), tamaño,
 - Vigilancia del sistema de archivos (`notify`: FSEvents en macOS y ReadDirectoryChangesW en Windows), más un escaneo completo cada 60 s por si se pierde algún evento.
 - Un archivo nuevo o modificado solo se indexa cuando:
   - su tamaño y fecha no cambian entre dos observaciones separadas al menos 2,5 s;
-  - en **Windows**, se puede abrir sin que otro proceso lo tenga abierto para escritura (copias del Explorador, guardados a medias);
+  - en **Windows**, se puede abrir sin que otro proceso lo tenga abierto para escritura (copias del Explorador, guardados a medias). Excepción: los documentos abiertos en PowerPoint, Word o Excel (detectados por su archivo de bloqueo `~$…`) se leen compartidos. Office guarda escribiendo un temporal y renombrándolo, así que lo guardado se replica sin esperar a cerrar la presentación;
   - en **macOS**, no tiene la fecha especial que el Finder pone durante una copia;
   - no cambia mientras se calcula su hash.
 - Se ignoran:
   - archivos de sistema y temporales: `.DS_Store`, `Thumbs.db`, `~$*` de Office, `.~lock.*`, `._*`, `*.tmp`, `*.part`, `*.crdownload`…;
   - la carpeta interna `.showfilesync`;
   - los enlaces simbólicos.
+- Un borrado local es una versión más: se incrementa el contador del equipo y se anuncia a los demás.
 - Si la carpeta deja de estar disponible (disco desconectado), **no** se interpreta como borrado.
-- Si desaparece la carpeta interna, se olvidan los borrados locales y se vuelve a recibir todo.
+- Si desaparece la carpeta interna (disco desmontado con el punto de montaje vacío, carpeta sustituida), la carpeta se trata como nueva: no se anuncia ningún borrado y se vuelve a recibir todo.
+- Renombrar o mover es un borrado más un archivo nuevo. Si el contenido acaba de ir a la papelera, se recupera de ahí con un `rename`, sin transferirlo.
+- Si en disco hay un cambio que el índice aún no refleja (archivo copiándose o recién editado), no se descarga nada para esa ruta hasta que el escáner lo procese.
 
 ## 8. Transferencias
 

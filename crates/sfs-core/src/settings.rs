@@ -49,6 +49,13 @@ pub struct Settings {
     /// Equipos del grupo vistos alguna vez (id → nombre).
     #[serde(default)]
     pub known: BTreeMap<String, String>,
+    /// Direcciones de conexión manual que el usuario pidió recordar ("anfitrión|puerto").
+    #[serde(default)]
+    pub manual_peers: Vec<String>,
+    /// Direcciones por las que se ha alcanzado a cada miembro del grupo
+    /// (id → "ip:puerto"). Permiten reconectar aunque el descubrimiento falle.
+    #[serde(default)]
+    pub peer_addrs: BTreeMap<String, Vec<String>>,
 }
 
 impl Settings {
@@ -66,6 +73,8 @@ impl Settings {
                     folder: None,
                     group: None,
                     known: BTreeMap::new(),
+                    manual_peers: Vec::new(),
+                    peer_addrs: BTreeMap::new(),
                 };
                 s.save(data_dir)?;
                 s

@@ -185,3 +185,51 @@ dialog input { width: 100%; font: inherit; padding: 8px 10px; border-radius: 8px
 @media (min-width: 640px) {
   .cards { grid-template-columns: 1fr 1fr; }
 }
+
+/* --- Cabecera --- */
+.top-right { display: flex; align-items: center; gap: 6px; }
+.gear svg { width: 18px; height: 18px; fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; display: block; }
+.gear:hover svg { stroke: var(--text); }
+.small { font-size: 12.5px; }
+
+/* --- Conexión manual --- */
+#join-form { display: block; }
+.join-row { display: flex; gap: 8px; }
+.manual { margin: 0 0 12px; border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; background: var(--bg); }
+.manual summary { cursor: pointer; font-weight: 600; font-size: 13px; color: var(--muted); }
+.manual[open] summary { margin-bottom: 6px; }
+.manual-grid { display: grid; grid-template-columns: 1fr 92px; gap: 8px; }
+.manual-grid label, .sheet label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+.manual input, .log-tools input, .log-tools select {
+  font: inherit; font-size: 13px; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+}
+.manual input:focus, .log-tools input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+label.check { flex-direction: row !important; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text); margin-top: 8px; }
+.error { white-space: pre-wrap; -webkit-user-select: text; user-select: text; }
+.error .detail { display: block; color: var(--muted); font-size: 11.5px; margin-top: 6px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+.error .link { padding: 0; margin-top: 6px; font-size: 12.5px; }
+
+/* --- Ajustes --- */
+.sheet { position: fixed; inset: 0; background: var(--bg); z-index: 10; display: flex; flex-direction: column; }
+.sheet-head { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.sheet-head h2 { margin: 0; }
+.tabs { display: flex; gap: 2px; background: var(--surface-2); padding: 3px; border-radius: 9px; margin-right: auto; }
+.tabs button { background: none; color: var(--muted); padding: 4px 12px; font-size: 13px; font-weight: 600; border-radius: 7px; }
+.tabs button.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.tab { flex: 1; overflow: auto; padding: 16px 20px; display: flex; flex-direction: column; }
+h3.first { margin-top: 0; }
+.row-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.danger-text { color: var(--red) !important; }
+.log-tools { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.log-tools input[type=search] { flex: 1; min-width: 120px; }
+.log-tools label.check { margin-top: 0; }
+.spacer-flex { flex: 1; }
+.log {
+  flex: 1; min-height: 200px; margin: 0; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; font: 11.5px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word;
+  -webkit-user-select: text; user-select: text;
+}
+.log .l-ERROR { color: var(--red); }
+.log .l-WARN { color: var(--amber); }
+.log .l-DEBUG { color: var(--muted); }
+.log time { color: var(--muted); }

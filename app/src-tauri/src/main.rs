@@ -62,6 +62,87 @@ async fn join_group(app: State<'_, App>, code: String, device_id: Option<String>
 }
 
 #[tauri::command]
+async fn join_manual(app: State<'_, App>, host: String, port: Option<String>, code: String, remember: bool) -> Result<(), String> {
+    let port = match port.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) => Some(sfs_core::netpath::parse_port(p)?),
+        None => None,
+    };
+    app.engine.join_group_manual(&host, port, &code, remember).await
+}
+
+#[tauri::command]
+async fn remembered_addresses(app: State<'_, App>) -> Result<Vec<String>, String> {
+    Ok(app.engine.remembered_addresses())
+}
+
+#[tauri::command]
+async fn forget_addresses(app: State<'_, App>) -> Result<(), String> {
+    app.engine.forget_addresses();
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LogView {
+    entries: Vec<sfs_core::diag::LogEntry>,
+    debug: bool,
+    dir: Option<String>,
+}
+
+#[tauri::command]
+async fn get_logs(level: String, query: String) -> Result<LogView, String> {
+    Ok(LogView {
+        entries: sfs_core::diag::entries(&level, &query, 1500),
+        debug: sfs_core::diag::debug_enabled(),
+        dir: sfs_core::diag::dir().map(|d| d.display().to_string()),
+    })
+}
+
+#[tauri::command]
+async fn logs_text(level: String, query: String) -> Result<String, String> {
+    Ok(sfs_core::diag::as_text(&sfs_core::diag::entries(&level, &query, sfs_core::diag::RING_CAPACITY)))
+}
+
+#[tauri::command]
+async fn set_debug_logging(on: bool) -> Result<(), String> {
+    sfs_core::diag::set_debug(on);
+    Ok(())
+}
+
+/// Exporta el registro completo a un archivo elegido por el usuario.
+#[tauri::command]
+async fn export_logs(handle: AppHandle, app: State<'_, App>) -> Result<Option<String>, String> {
+    let h = handle.clone();
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        h.dialog().file().set_title("Exportar registro de diagnóstico").set_file_name("ShowFileSync-diagnostico.log").blocking_save_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(path) = picked.and_then(|p| p.into_path().ok()) else { return Ok(None) };
+    let s = app.engine.snapshot();
+    let ifs: Vec<String> = sfs_core::netpath::local_interfaces().iter().map(|i| format!("{} {}/{}", i.name, i.ip, i.prefix)).collect();
+    let header = format!(
+        "Versión: {}\nSistema: {} {}\nEquipo: {} (id {})\nPuerto TCP: {}\nInterfaces: {}\nGrupo: {}",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        s.device_name,
+        &s.device_id[..8],
+        app.engine.port(),
+        ifs.join(", "),
+        s.group.map(|g| g.name).unwrap_or_else(|| "ninguno".into())
+    );
+    sfs_core::diag::export(&path, &header).map_err(|e| e.to_string())?;
+    Ok(Some(path.display().to_string()))
+}
+
+#[tauri::command]
+async fn open_logs_folder(handle: AppHandle) -> Result<(), String> {
+    let dir = sfs_core::diag::dir().ok_or("El registro en disco no está activo")?;
+    handle.opener().open_path(dir.display().to_string(), None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn leave_group(app: State<'_, App>) -> Result<(), String> {
     app.engine.leave_group();
     Ok(())
@@ -165,7 +246,13 @@ fn data_dir(app: &AppHandle) -> PathBuf {
 }
 
 fn main() {
-    tracing_subscriber::fmt().with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into())).init();
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    use tracing_subscriber::Layer;
+    // Consola (filtrable con RUST_LOG) + registro de diagnóstico persistente.
+    let console = tracing_subscriber::fmt::layer()
+        .with_filter(tracing_subscriber::EnvFilter::new(std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into())));
+    tracing_subscriber::registry().with(console).with(sfs_core::diag::layer()).init();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_window(app)))
@@ -173,6 +260,10 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let handle = app.handle().clone();
+            if let Err(e) = sfs_core::diag::init_file(&data_dir(&handle).join("logs")) {
+                eprintln!("No se pudo abrir el registro de diagnóstico: {e}");
+            }
+            tracing::info!("Show File Sync {} iniciado ({} {})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);
             let cfg = EngineConfig::new(data_dir(&handle));
             let engine = tauri::async_runtime::block_on(Engine::start(cfg))?;
             app.manage(App { engine: engine.clone() });
@@ -235,6 +326,14 @@ fn main() {
             close_pairing,
             join_group,
             leave_group,
+            join_manual,
+            remembered_addresses,
+            forget_addresses,
+            get_logs,
+            logs_text,
+            set_debug_logging,
+            export_logs,
+            open_logs_folder,
             ack_conflicts,
             rename_device,
             open_folder

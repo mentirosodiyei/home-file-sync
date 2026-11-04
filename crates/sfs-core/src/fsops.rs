@@ -85,6 +85,41 @@ pub fn backup_existing(root: &Path, rel: &str) -> std::io::Result<Option<PathBuf
     Ok(Some(dst))
 }
 
+/// Mueve un archivo borrado en otro equipo a `papelera/<fecha>/` (se conserva 14 días).
+pub fn move_to_trash(root: &Path, rel: &str) -> std::io::Result<PathBuf> {
+    let src = to_local(root, rel);
+    let dst = to_local(&meta_dir(root).join("papelera").join(stamp(SystemTime::now())), rel);
+    if let Some(p) = dst.parent() {
+        std::fs::create_dir_all(p)?;
+    }
+    std::fs::rename(&src, &dst)?;
+    Ok(dst)
+}
+
+/// Elimina las carpetas que han quedado vacías (o solo con basura del sistema)
+/// al borrar `rel`, sin tocar nunca la carpeta raíz.
+pub fn remove_empty_parents(root: &Path, rel: &str) {
+    let mut p = to_local(root, rel);
+    while let Some(parent) = p.parent().map(Path::to_path_buf) {
+        if parent == root || !parent.starts_with(root) {
+            break;
+        }
+        let only_junk = std::fs::read_dir(&parent)
+            .map(|rd| rd.flatten().all(|e| matches!(e.file_name().to_str(), Some(".DS_Store" | "Thumbs.db" | "desktop.ini"))))
+            .unwrap_or(false);
+        if !only_junk {
+            break;
+        }
+        for junk in [".DS_Store", "Thumbs.db", "desktop.ini"] {
+            let _ = std::fs::remove_file(parent.join(junk));
+        }
+        if std::fs::remove_dir(&parent).is_err() {
+            break;
+        }
+        p = parent;
+    }
+}
+
 /// Coloca un temporal ya verificado en su sitio definitivo.
 /// Devuelve (tamaño, mtime) tal como quedan en disco.
 pub fn install(root: &Path, temp: &Path, rel: &str, mtime_ns: i64) -> std::io::Result<(u64, i64)> {
@@ -163,10 +198,12 @@ pub fn cleanup(root: &Path, versions_max_age: Duration, temp_max_age: Duration) 
             .and_then(|t| now.duration_since(t).ok())
             .is_some_and(|d| d > age)
     };
-    if let Ok(rd) = std::fs::read_dir(meta_dir(root).join("versiones")) {
-        for e in rd.flatten() {
-            if old(&e.path(), versions_max_age) {
-                let _ = std::fs::remove_dir_all(e.path());
+    for sub in ["versiones", "papelera"] {
+        if let Ok(rd) = std::fs::read_dir(meta_dir(root).join(sub)) {
+            for e in rd.flatten() {
+                if old(&e.path(), versions_max_age) {
+                    let _ = std::fs::remove_dir_all(e.path());
+                }
             }
         }
     }

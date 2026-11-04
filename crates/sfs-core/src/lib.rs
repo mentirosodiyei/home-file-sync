@@ -7,10 +7,12 @@
 
 pub mod auth;
 pub mod decide;
+pub mod diag;
 pub mod discovery;
 pub mod engine;
 pub mod fsops;
 pub mod index;
+pub mod netpath;
 pub mod pathsafe;
 mod peer;
 pub mod protocol;

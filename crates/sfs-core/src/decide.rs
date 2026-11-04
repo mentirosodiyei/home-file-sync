@@ -1,7 +1,10 @@
 //! Decisiones de sincronización. Funciones puras, fáciles de probar.
 //!
-//! Reglas:
-//! * Los borrados nunca se propagan.
+//! Reglas (las carpetas se comportan como una sola):
+//! * Un borrado es una versión más del archivo: si es posterior a la que hay
+//!   aquí, el archivo se elimina (se mueve a `.showfilesync/papelera`).
+//! * Si un equipo edita mientras otro borra (cambios independientes), gana la
+//!   edición: nunca se pierde contenido modificado.
 //! * Mismo contenido (hash) = nada que transferir; solo se fusionan vectores.
 //! * Versión remota posterior = actualización (la anterior se guarda en
 //!   `.showfilesync/versiones`).
@@ -23,19 +26,37 @@ pub enum Action {
     Download,
     /// Descargar la versión remota y conservar la local como copia de conflicto.
     DownloadConflict,
+    /// Eliminar el archivo local (a la papelera): se borró en otro equipo.
+    Delete,
+    /// Registrar el borrado aunque aquí no exista, para no recibirlo de nuevo
+    /// de un equipo que aún tenga la versión antigua.
+    AdoptTombstone,
 }
 
 /// ¿Qué hacer con la versión remota `remote` dada la local `local`?
 pub fn decide(local: Option<&FileEntry>, remote: &FileEntry) -> Action {
     if remote.deleted {
-        return Action::Nothing;
+        return match local {
+            None => Action::AdoptTombstone,
+            Some(l) if l.deleted => match remote.vv.compare(&l.vv) {
+                Causality::Newer | Causality::Concurrent => Action::MergeVersion,
+                _ => Action::Nothing,
+            },
+            // Solo se borra si el borrado es posterior a lo que hay aquí; si
+            // aquí se editó a la vez, gana la edición.
+            Some(l) => match remote.vv.compare(&l.vv) {
+                Causality::Newer => Action::Delete,
+                _ => Action::Nothing,
+            },
+        };
     }
     let Some(local) = local else { return Action::Download };
     let causality = remote.vv.compare(&local.vv);
     if local.deleted {
-        // Borrado aquí: solo vuelve si aparece una versión nueva.
+        // Borrado aquí: vuelve si la versión remota es posterior al borrado o
+        // se editó a la vez que se borraba (gana la edición).
         return match causality {
-            Causality::Newer | Causality::Concurrent if remote.hash != local.hash => Action::Download,
+            Causality::Newer | Causality::Concurrent => Action::Download,
             _ => Action::Nothing,
         };
     }
@@ -70,6 +91,8 @@ pub fn better(a: &FileEntry, b: &FileEntry) -> bool {
     match a.vv.compare(&b.vv) {
         Causality::Newer => true,
         Causality::Older => false,
+        // Entre un borrado y una edición independientes, gana la edición.
+        _ if a.deleted != b.deleted => !a.deleted,
         _ => a.hash != b.hash && tiebreak(a, b) == Ordering::Greater,
     }
 }
@@ -112,19 +135,36 @@ mod tests {
         assert_eq!(decide(None, &e("aa", 1, &[(1, 1)])), Action::Download);
     }
 
-    #[test]
-    fn remote_deletion_never_propagates() {
-        let mut r = e("aa", 1, &[(1, 2)]);
-        r.deleted = true;
-        assert_eq!(decide(Some(&e("aa", 1, &[(1, 1)])), &r), Action::Nothing);
+    fn deleted(mut x: FileEntry) -> FileEntry {
+        x.deleted = true;
+        x
     }
 
     #[test]
-    fn local_deletion_blocks_same_version_but_not_newer() {
-        let mut l = e("aa", 1, &[(1, 1)]);
-        l.deleted = true;
-        assert_eq!(decide(Some(&l), &e("aa", 1, &[(1, 1)])), Action::Nothing);
-        assert_eq!(decide(Some(&l), &e("bb", 2, &[(1, 2)])), Action::Download);
+    fn newer_deletion_propagates() {
+        // A tenía v{1:1}; lo borra → tombstone v{1:2}.
+        let r = deleted(e("aa", 1, &[(1, 2)]));
+        assert_eq!(decide(Some(&e("aa", 1, &[(1, 1)])), &r), Action::Delete);
+        assert_eq!(decide(None, &r), Action::AdoptTombstone);
+        // Un borrado antiguo no elimina una versión posterior.
+        assert_eq!(decide(Some(&e("bb", 2, &[(1, 3)])), &r), Action::Nothing);
+    }
+
+    #[test]
+    fn edit_wins_over_concurrent_deletion() {
+        let tomb = deleted(e("aa", 1, &[(1, 2)])); // A borra
+        let edit = e("bb", 5, &[(1, 1), (2, 1)]); // B edita a la vez
+        assert_eq!(decide(Some(&edit), &tomb), Action::Nothing, "en B se conserva la edición");
+        assert_eq!(decide(Some(&tomb), &edit), Action::Download, "en A vuelve la versión editada");
+        assert!(better(&edit, &tomb) && !better(&tomb, &edit));
+    }
+
+    #[test]
+    fn deleted_here_returns_only_with_a_newer_version() {
+        let l = deleted(e("aa", 1, &[(1, 2)]));
+        assert_eq!(decide(Some(&l), &e("aa", 1, &[(1, 1)])), Action::Nothing, "versión anterior al borrado");
+        assert_eq!(decide(Some(&l), &e("aa", 1, &[(1, 3)])), Action::Download, "restaurado con el mismo contenido");
+        assert_eq!(decide(Some(&l), &deleted(e("aa", 1, &[(1, 2), (2, 1)]))), Action::MergeVersion);
     }
 
     #[test]

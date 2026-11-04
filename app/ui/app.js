@@ -62,6 +62,7 @@ function render(s) {
   bind("folder", s.folder);
   bind("deviceName", s.deviceName);
   bind("groupName", s.group ? `· ${s.group.name}` : "");
+  if (!$("settings").hidden) $("leave-row").hidden = !s.group;
   bind("networkWarning", s.networkWarning);
   $("footer").hidden = !s.group;
 
@@ -177,6 +178,40 @@ function ask(text, { input = null, ok = "Aceptar", danger = false } = {}) {
 }
 
 const actions = {
+  settings() {
+    openSettings("general");
+  },
+  diagnostics() {
+    openSettings("advanced");
+  },
+  "close-settings"() {
+    closeSettings();
+  },
+  async forget() {
+    await invoke("forget_addresses");
+    loadRemembered();
+  },
+  async "copy-logs"() {
+    const text = await invoke("logs_text", { level: $("log-level").value, query: $("log-query").value });
+    try {
+      await navigator.clipboard.writeText(text);
+      $("log-status").textContent = "Registro copiado al portapapeles.";
+    } catch {
+      const r = document.createRange();
+      r.selectNodeContents($("log"));
+      getSelection().removeAllRanges();
+      getSelection().addRange(r);
+      document.execCommand("copy");
+      $("log-status").textContent = "Registro copiado al portapapeles.";
+    }
+  },
+  async "export-logs"() {
+    const path = await invoke("export_logs");
+    if (path) $("log-status").textContent = `Registro exportado a ${path}`;
+  },
+  async "open-logs"() {
+    await invoke("open_logs_folder");
+  },
   async "choose-folder"() {
     const err = $("folder-error");
     try {
@@ -212,7 +247,10 @@ const actions = {
       "¿Salir del grupo? Este equipo dejará de sincronizarse. Los archivos de tu carpeta no se borran. Para volver necesitarás un código nuevo.",
       { ok: "Salir del grupo", danger: true }
     );
-    if (ok) await invoke("leave_group");
+    if (ok) {
+      await invoke("leave_group");
+      closeSettings();
+    }
   },
 };
 
@@ -243,13 +281,24 @@ $("code").addEventListener("input", (e) => {
   e.target.value = d.length > 4 ? `${d.slice(0, 4)} ${d.slice(4)}` : d;
 });
 
+function showJoinError(text) {
+  const box = $("join-error");
+  const [main, detail] = String(text).split(/\n\nDetalle: /);
+  box.innerHTML = `${esc(main)}${detail ? `<span class="detail">${esc(detail)}</span>` : ""}<button class="link" data-action="diagnostics">Ver registro de diagnóstico</button>`;
+  box.hidden = false;
+}
+
 $("join-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const code = $("code").value.replace(/\D/g, "");
   const err = $("join-error");
   if (code.length !== 8) {
-    err.textContent = "El código tiene 8 cifras.";
-    err.hidden = false;
+    showJoinError("El código tiene 8 cifras.");
+    return;
+  }
+  const manual = $("manual").open && $("m-host").value.trim() !== "";
+  if ($("manual").open && !manual) {
+    showJoinError("Escribe la dirección IP o el nombre del equipo, o cierra «Conexión manual» para usar la detección automática.");
     return;
   }
   const btn = $("join-btn");
@@ -257,17 +306,102 @@ $("join-form").addEventListener("submit", async (e) => {
   btn.textContent = "Uniendo…";
   err.hidden = true;
   try {
-    const deviceId = $("open-groups").querySelector("input:checked")?.value ?? null;
-    await invoke("join_group", { code, deviceId });
+    if (manual) {
+      await invoke("join_manual", {
+        host: $("m-host").value.trim(),
+        port: $("m-port").value.trim() || null,
+        code,
+        remember: $("m-remember").checked,
+      });
+      $("m-host").value = "";
+      $("m-port").value = "";
+      $("m-remember").checked = false;
+    } else {
+      const deviceId = $("open-groups").querySelector("input:checked")?.value ?? null;
+      await invoke("join_group", { code, deviceId });
+    }
     $("code").value = "";
   } catch (x) {
-    err.textContent = String(x);
-    err.hidden = false;
+    showJoinError(x);
   } finally {
     btn.disabled = false;
     btn.textContent = "Unirse";
     refresh();
   }
+});
+
+$("m-port").addEventListener("input", (e) => (e.target.value = e.target.value.replace(/\D/g, "").slice(0, 5)));
+
+// ---------------------------------------------------------------------------
+// Ajustes y diagnóstico
+// ---------------------------------------------------------------------------
+
+let logTimer = null;
+
+function openSettings(tab = "general") {
+  $("settings").hidden = false;
+  selectTab(tab);
+  loadRemembered();
+}
+
+function closeSettings() {
+  $("settings").hidden = true;
+  clearInterval(logTimer);
+  logTimer = null;
+}
+
+function selectTab(tab) {
+  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  $("tab-general").hidden = tab !== "general";
+  $("tab-advanced").hidden = tab !== "advanced";
+  clearInterval(logTimer);
+  logTimer = null;
+  if (tab === "advanced") {
+    loadLogs(true);
+    logTimer = setInterval(() => loadLogs(false), 1500);
+  }
+}
+
+async function loadRemembered() {
+  try {
+    const list = await invoke("remembered_addresses");
+    $("remembered").textContent = list && list.length ? list.join(", ") : "Ninguna";
+    $("forget-btn").hidden = !(list && list.length);
+  } catch (e) {
+    console.error(e);
+  }
+  $("leave-row").hidden = !state?.group;
+}
+
+async function loadLogs(scrollToEnd) {
+  const pre = $("log");
+  const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
+  try {
+    const v = await invoke("get_logs", { level: $("log-level").value, query: $("log-query").value });
+    $("log-debug").checked = !!v.debug;
+    pre.innerHTML = v.entries
+      .map((e) => {
+        const t = new Date(e.timeMs).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        return `<span class="l-${e.level}"><time>${t}</time> ${e.level.padEnd(5)} ${esc(e.message)}</span>`;
+      })
+      .join("\n");
+    $("log-status").textContent = `${v.entries.length} entrada(s) mostradas${v.dir ? ` · archivos en ${v.dir}` : ""}`;
+    if (scrollToEnd || atEnd) pre.scrollTop = pre.scrollHeight;
+  } catch (e) {
+    $("log-status").textContent = String(e);
+  }
+}
+
+document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => selectTab(b.dataset.tab)));
+$("log-level").addEventListener("change", () => loadLogs(true));
+$("log-query").addEventListener("input", () => loadLogs(true));
+$("log-debug").addEventListener("change", async (e) => {
+  await invoke("set_debug_logging", { on: e.target.checked });
+  if (e.target.checked) $("log-level").value = "DEBUG";
+  loadLogs(true);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("settings").hidden && !$("dialog").open) closeSettings();
 });
 
 refresh();
@@ -277,8 +411,33 @@ setInterval(refresh, 700);
 // Modo demostración (abrir index.html en un navegador): datos de ejemplo.
 // ?demo=folder | group | main (por defecto)
 // ---------------------------------------------------------------------------
-function demoInvoke(cmd) {
+function demoInvoke(cmd, args) {
   const mode = new URLSearchParams(location.search).get("demo") || "main";
+  if (cmd === "get_logs") {
+    const now = Date.now();
+    const all = [
+      ["INFO", "Show File Sync 0.1.1 iniciado (macos aarch64)"],
+      ["INFO", "Descubierto «PORTATIL-SALON» (id 7a3f19c2, grupo «Grupo de PORTATIL-SALON», acepta equipos, protocolo v1)"],
+      ["INFO", "«PORTATIL-SALON» anuncia 192.168.1.66:47800 vía baliza UDP (paquete recibido desde 192.168.1.66:52011), interfaz local: en8"],
+      ["INFO", "«PORTATIL-SALON» anuncia 172.27.160.1:47800 vía mDNS, interfaz local: ninguna en esa subred"],
+      ["INFO", "Emparejamiento: direcciones candidatas en orden: [192.168.1.66:47800 (baliza UDP, interfaz en8), 172.27.160.1:47800 (mDNS, fuera de las subredes locales)]"],
+      ["WARN", "Intento de conexión fallido: 192.168.1.66:47800 (baliza UDP, interfaz en8) TCP → fallo en conexión TCP: No route to host (os error 65) [error del sistema 65]"],
+      ["ERROR", "macOS deniega a Show File Sync las conexiones salientes a la red local (permiso «Red local»)"],
+      ["DEBUG", "Conexión entrante desde 192.168.1.70:50122"],
+    ].map(([level, message], i) => ({ timeMs: now - (8 - i) * 1000, level, target: "peer", message }));
+    const rank = { ERROR: 4, WARN: 3, INFO: 2, DEBUG: 1 };
+    const q = (args?.query || "").toLowerCase();
+    return Promise.resolve({
+      entries: all.filter((e) => rank[e.level] >= rank[args?.level || "INFO"] && e.message.toLowerCase().includes(q)),
+      debug: false,
+      dir: "/Users/ana/Library/Application Support/org.showfilesync.app/logs",
+    });
+  }
+  if (cmd === "remembered_addresses") return Promise.resolve(["192.168.1.66:47800"]);
+  if (cmd === "join_manual" || cmd === "join_group")
+    return Promise.reject(
+      "macOS está bloqueando las conexiones de Show File Sync hacia la red local. Abre Ajustes del Sistema → Privacidad y seguridad → Red local y activa Show File Sync.\n\nDetalle: 192.168.1.66:47800 (manual, interfaz en8) TCP → fallo en conexión TCP: No route to host (os error 65) [error del sistema 65]"
+    );
   if (cmd !== "get_state") return Promise.resolve(null);
   const t = Date.now() / 1000;
   const p = (t * 7) % 100;

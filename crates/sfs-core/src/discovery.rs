@@ -9,9 +9,10 @@
 //! Lo anunciado no es secreto ni se usa para autenticar: solo sirve para
 //! saber a quién conectar. La identidad real se comprueba en la conexión.
 
+use crate::netpath::{AddrSource, Candidate};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -42,7 +43,9 @@ pub struct Advert {
 #[derive(Clone, Debug)]
 pub struct Sighting {
     pub advert: Advert,
-    pub addrs: Vec<SocketAddr>,
+    pub addrs: Vec<Candidate>,
+    /// Dirección de origen del anuncio (solo baliza UDP).
+    pub from: Option<SocketAddr>,
 }
 
 #[derive(Debug)]
@@ -57,14 +60,6 @@ pub struct Discovery {
     stop: Arc<AtomicBool>,
     pub mdns_error: Option<String>,
     pub beacon_error: Option<String>,
-}
-
-fn usable_ip(ip: &IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => !v4.is_unspecified() && !v4.is_multicast(),
-        // Las IPv6 de enlace local necesitan identificador de interfaz; usamos IPv4.
-        IpAddr::V6(_) => false,
-    }
 }
 
 impl Discovery {
@@ -142,10 +137,10 @@ impl Discovery {
                             let addrs = info
                                 .get_addresses()
                                 .iter()
-                                .filter(|ip| usable_ip(ip))
-                                .map(|ip| SocketAddr::new(*ip, advert.port))
+                                .filter(|ip| crate::netpath::usable(**ip))
+                                .map(|ip| Candidate { addr: SocketAddr::new(*ip, advert.port), source: AddrSource::Mdns })
                                 .collect();
-                            let _ = tx.send(DiscoveryEvent::Seen(Sighting { advert, addrs }));
+                            let _ = tx.send(DiscoveryEvent::Seen(Sighting { advert, addrs, from: None }));
                         }
                         mdns_sd::ServiceEvent::ServiceRemoved(_, fullname) => {
                             if let Some(id) = names.remove(&fullname) {
@@ -199,8 +194,8 @@ impl Discovery {
                 if advert.device_id == me || advert.device_id.len() != 32 || advert.port == 0 {
                     continue;
                 }
-                let addrs = vec![SocketAddr::new(from.ip(), advert.port)];
-                let _ = tx.send(DiscoveryEvent::Seen(Sighting { advert, addrs }));
+                let addrs = vec![Candidate { addr: SocketAddr::new(from.ip(), advert.port), source: AddrSource::Beacon }];
+                let _ = tx.send(DiscoveryEvent::Seen(Sighting { advert, addrs, from: Some(from) }));
             }
         })?;
         Ok(())

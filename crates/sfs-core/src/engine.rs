@@ -11,6 +11,8 @@
 use crate::discovery::{has_lan_ipv4, Advert, Discovery, DiscoveryEvent, DEFAULT_BEACON_PORT};
 use crate::fsops;
 use crate::index::{FileEntry, LocalIndex};
+use crate::netpath::{AddrSource, Candidate};
+use crate::peer::LinkError;
 use crate::protocol::{Msg, PeerStatus, PROTOCOL_VERSION};
 use crate::scanner::{Me, Scanner};
 use crate::settings::{check_folder, Group, Settings};
@@ -110,13 +112,25 @@ pub(crate) struct Peer {
 
 pub(crate) struct Nearby {
     pub advert: Advert,
-    pub addrs: Vec<SocketAddr>,
-    pub first_seen: Instant,
+    /// Direcciones conocidas del equipo con su origen y la última vez que se vieron.
+    pub addrs: Vec<(Candidate, Instant)>,
     pub last_seen: Instant,
-    pub next_dial: Instant,
+}
+
+/// Estado de los intentos de conexión con un miembro del grupo.
+pub(crate) struct DialState {
+    /// Desde cuándo hay direcciones para intentarlo (reparto de quién marca).
+    pub since: Instant,
+    pub next: Instant,
     pub fails: u32,
     pub error: Option<String>,
     pub dialing: bool,
+}
+
+pub(crate) struct ManualTarget {
+    pub id: Option<String>,
+    pub next: Instant,
+    pub fails: u32,
 }
 
 pub(crate) struct Pairing {
@@ -181,7 +195,20 @@ pub(crate) struct Inner {
     pub folder: Mutex<Option<Arc<FolderCtx>>>,
     pub peers: Mutex<HashMap<String, Peer>>,
     pub nearby: Mutex<HashMap<String, Nearby>>,
-    pub manual: Mutex<HashMap<SocketAddr, (Option<String>, Instant)>>,
+    /// Direcciones manuales: id del equipo (si ya se sabe), próximo intento y fallos.
+    pub manual: Mutex<HashMap<SocketAddr, ManualTarget>>,
+    /// Último bloqueo detectado del permiso de Red local de macOS.
+    pub lnp_blocked: Mutex<Option<Instant>>,
+    /// Direcciones aprendidas o comunicadas por el grupo, por equipo.
+    pub book: Mutex<HashMap<String, Vec<(Candidate, Instant)>>>,
+    pub book_dirty: AtomicBool,
+    pub dial: Mutex<HashMap<String, DialState>>,
+    /// Archivos enviados a la papelera hace poco (hash → ruta, tamaño, cuándo):
+    /// si el mismo contenido llega con otro nombre (renombrado, movido), se
+    /// recupera de ahí en lugar de descargarlo.
+    pub recent_trash: Mutex<HashMap<String, (PathBuf, u64, Instant)>>,
+    /// Problemas del descubrimiento automático (para el diagnóstico).
+    pub discovery_health: Mutex<Vec<String>>,
     pub pairing: Mutex<Option<Pairing>>,
     pub activity: Mutex<Activity>,
     pub active_downloads: Mutex<HashMap<String, String>>,
@@ -219,6 +246,121 @@ impl Inner {
 
     pub fn event(&self, kind: &str, text: String) {
         self.activity.lock().unwrap().event(kind, text);
+    }
+
+    /// Recuerda una dirección por la que se alcanza (o se puede alcanzar) a un equipo.
+    pub fn learn_addr(&self, id: &str, c: Candidate) {
+        if id == self.my_id || !crate::netpath::usable(c.addr.ip()) || c.source == AddrSource::Manual {
+            return;
+        }
+        let now = Instant::now();
+        let mut book = self.book.lock().unwrap();
+        let v = book.entry(id.to_string()).or_default();
+        match v.iter_mut().find(|(x, _)| x.addr == c.addr) {
+            Some((x, seen)) => {
+                *seen = now;
+                if c.source < x.source {
+                    x.source = c.source;
+                    self.book_dirty.store(true, Ordering::Relaxed);
+                }
+            }
+            None => {
+                tracing::debug!("Dirección de {} aprendida: {} ({})", &id[..8.min(id.len())], c.addr, c.source.text());
+                v.push((c, now));
+                self.book_dirty.store(true, Ordering::Relaxed);
+            }
+        }
+        v.sort_by_key(|(x, seen)| (x.source, std::cmp::Reverse(*seen)));
+        v.truncate(8);
+    }
+
+    /// Todas las direcciones conocidas de un equipo: descubrimiento + aprendidas.
+    pub fn candidates_for(&self, id: &str, group_id: &str) -> Vec<Candidate> {
+        let mut v: Vec<Candidate> = Vec::new();
+        if let Some(n) = self.nearby.lock().unwrap().get(id) {
+            if n.advert.group_id == group_id && n.advert.proto == PROTOCOL_VERSION {
+                v.extend(n.addrs.iter().map(|(c, _)| *c));
+            }
+        }
+        if let Some(b) = self.book.lock().unwrap().get(id) {
+            v.extend(b.iter().map(|(c, _)| *c));
+        }
+        v
+    }
+
+    /// Añade un miembro del grupo comunicado por otro. Devuelve `true` si es nuevo.
+    pub fn add_member(&self, id: &str, name: &str) -> bool {
+        let mut peers = self.peers.lock().unwrap();
+        if peers.contains_key(id) {
+            return false;
+        }
+        peers.insert(id.to_string(), Peer { name: name.to_string(), conn: None, index: HashMap::new(), index_ready: false, status: PeerStatus::default() });
+        drop(peers);
+        self.settings.lock().unwrap().known.insert(id.to_string(), name.to_string());
+        self.save_settings();
+        true
+    }
+
+    /// Envía a cada equipo conectado las direcciones de los demás.
+    pub fn broadcast_members(&self) {
+        let group_id = self.group().map(|g| g.id).unwrap_or_default();
+        let peers = self.peers.lock().unwrap();
+        let ifs = crate::netpath::local_interfaces();
+        let connected: Vec<(String, String, ConnHandle)> =
+            peers.iter().filter_map(|(id, p)| p.conn.clone().map(|c| (id.clone(), p.name.clone(), c))).collect();
+        drop(peers);
+        let members: Vec<crate::protocol::MemberAddrs> = connected
+            .iter()
+            .filter_map(|(id, name, _)| {
+                let addrs: Vec<String> = crate::netpath::order(&self.candidates_for(id, &group_id), &ifs)
+                    .iter()
+                    .filter(|c| !c.addr.ip().is_loopback())
+                    .take(crate::protocol::EXT_MAX_ADDRS)
+                    .map(|c| c.addr.to_string())
+                    .collect();
+                (!addrs.is_empty()).then(|| crate::protocol::MemberAddrs { id: id.clone(), name: name.clone(), addrs })
+            })
+            .collect();
+        for (id, _, c) in &connected {
+            let others: Vec<_> = members.iter().filter(|m| &m.id != id).cloned().collect();
+            if !others.is_empty() {
+                let _ = c.ctrl.send(crate::protocol::Ext::Members { members: others }.to_msg());
+            }
+        }
+    }
+
+    /// Guarda en disco las direcciones aprendidas (si han cambiado).
+    pub fn persist_book(&self) {
+        if !self.book_dirty.swap(false, Ordering::Relaxed) {
+            return;
+        }
+        let map: std::collections::BTreeMap<String, Vec<String>> = self
+            .book
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(id, v)| (id.clone(), v.iter().take(6).map(|(c, _)| c.addr.to_string()).collect()))
+            .collect();
+        self.settings.lock().unwrap().peer_addrs = map;
+        self.save_settings();
+    }
+
+    /// Olvida todo lo aprendido sobre los miembros (al cambiar de grupo).
+    pub fn forget_members(&self) {
+        self.book.lock().unwrap().clear();
+        self.dial.lock().unwrap().clear();
+        self.settings.lock().unwrap().peer_addrs.clear();
+        self.book_dirty.store(false, Ordering::Relaxed);
+    }
+
+    /// Anota un fallo de conexión: detecta el bloqueo de Red local de macOS.
+    pub fn note_link_error(&self, e: &LinkError) {
+        if crate::netpath::looks_like_macos_lnp_block(e.attempts()) {
+            tracing::error!("macOS deniega a Show File Sync las conexiones salientes a la red local (permiso «Red local»)");
+            *self.lnp_blocked.lock().unwrap() = Some(Instant::now());
+        } else if e.attempts().iter().any(|a| a.ok() || a.phase != crate::netpath::Phase::Tcp) {
+            *self.lnp_blocked.lock().unwrap() = None;
+        }
     }
 
     pub fn me(&self) -> Me {
@@ -313,6 +455,12 @@ impl Engine {
             peers: Mutex::new(HashMap::new()),
             nearby: Mutex::new(HashMap::new()),
             manual: Mutex::new(HashMap::new()),
+            lnp_blocked: Mutex::new(None),
+            book: Mutex::new(HashMap::new()),
+            book_dirty: AtomicBool::new(false),
+            dial: Mutex::new(HashMap::new()),
+            discovery_health: Mutex::new(Vec::new()),
+            recent_trash: Mutex::new(HashMap::new()),
             pairing: Mutex::new(None),
             activity: Mutex::new(Activity::default()),
             active_downloads: Mutex::new(HashMap::new()),
@@ -328,6 +476,21 @@ impl Engine {
             last_status: Mutex::new(PeerStatus::default()),
             cfg,
         });
+        // Direcciones aprendidas en sesiones anteriores.
+        {
+            let saved = inner.settings.lock().unwrap().peer_addrs.clone();
+            let mut book = inner.book.lock().unwrap();
+            for (id, addrs) in saved {
+                let v: Vec<(Candidate, Instant)> = addrs
+                    .iter()
+                    .filter_map(|a| a.parse().ok())
+                    .map(|addr| (Candidate { addr, source: AddrSource::Learned }, Instant::now()))
+                    .collect();
+                if !v.is_empty() {
+                    book.insert(id, v);
+                }
+            }
+        }
         // Equipos conocidos: aparecen como "Desconectado" hasta que conecten.
         {
             let known = inner.settings.lock().unwrap().known.clone();
@@ -345,6 +508,15 @@ impl Engine {
 
         let i = inner.clone();
         inner.spawn(async move { crate::peer::accept_loop(i, listener).await });
+        // También IPv6 en el mismo puerto (si el sistema lo permite).
+        match bind_listener_v6(port) {
+            Ok(l6) => {
+                let i = inner.clone();
+                inner.spawn(async move { crate::peer::accept_loop(i, l6).await });
+            }
+            Err(e) => tracing::debug!("Sin escucha IPv6: {e}"),
+        }
+        tracing::info!("Show File Sync escuchando en el puerto TCP {port} (equipo {})", &inner.my_id[..8]);
         let i = inner.clone();
         inner.spawn(async move { crate::transfer::scheduler_loop(i).await });
         let i = inner.clone();
@@ -357,12 +529,16 @@ impl Engine {
         if inner.cfg.discovery {
             let (tx, rx) = mpsc::unbounded_channel();
             let d = Discovery::start(inner.advert(), inner.cfg.beacon_port, tx);
+            let mut health = Vec::new();
             if let Some(e) = &d.mdns_error {
                 tracing::warn!("mDNS no disponible: {e}");
+                health.push(format!("mDNS no disponible: {e}"));
             }
             if let Some(e) = &d.beacon_error {
                 tracing::warn!("baliza UDP no disponible: {e}");
+                health.push(format!("baliza UDP no disponible: {e}"));
             }
+            *inner.discovery_health.lock().unwrap() = health;
             *inner.discovery.lock().unwrap() = Some(d);
             let i = inner.clone();
             inner.spawn(async move { discovery_loop(i, rx).await });
@@ -411,8 +587,10 @@ impl Engine {
             Ok(existed) => {
                 if !existed && !index.entries.is_empty() {
                     // La carpeta interna ha desaparecido (carpeta sustituida o
-                    // borrada): olvidamos los borrados para volver a recibirlo todo.
-                    index.entries.retain(|_, e| !e.entry.deleted);
+                    // disco desmontado): se empieza de cero. Lo que falte aquí se
+                    // vuelve a recibir; nunca se interpreta como borrado.
+                    tracing::warn!("La carpeta {} no tiene su carpeta interna: se trata como carpeta nueva", root.display());
+                    index.entries.clear();
                     index.dirty = true;
                 }
             }
@@ -447,6 +625,7 @@ impl Engine {
             s.group = Some(Group::create(&name));
             s.known.clear();
         }
+        self.inner.forget_members();
         self.inner.save_settings();
         self.inner.disconnect_all();
         self.inner.peers.lock().unwrap().clear();
@@ -474,7 +653,7 @@ impl Engine {
     /// aceptando equipos, `device_id` indica cuál.
     pub async fn join_group(&self, code: &str, device_id: Option<String>) -> Result<(), String> {
         let code = crate::auth::normalize_code(code).ok_or("El código debe tener 8 cifras.")?;
-        let candidates: Vec<(String, Vec<SocketAddr>)> = {
+        let devices: Vec<(String, String, Vec<Candidate>)> = {
             let nearby = self.inner.nearby.lock().unwrap();
             let open: Vec<&Nearby> = nearby.values().filter(|n| n.advert.pairing).collect();
             let chosen: Vec<&Nearby> = match &device_id {
@@ -487,40 +666,124 @@ impl Engine {
                     open
                 }
             };
-            chosen.iter().map(|n| (n.advert.name.clone(), n.addrs.clone())).collect()
+            chosen
+                .iter()
+                .map(|n| (n.advert.name.clone(), n.advert.group_name.clone(), n.addrs.iter().map(|(c, _)| *c).collect()))
+                .collect()
         };
-        if candidates.is_empty() {
-            return Err("No se encuentra ningún equipo mostrando un código. Pulsa «Añadir equipo» en un equipo del grupo y comprueba que ambos están en la misma red.".into());
+        if devices.is_empty() {
+            return Err("No se encuentra ningún equipo mostrando un código. Pulsa «Añadir equipo» en un equipo del grupo y comprueba que ambos están en la misma red. Si la red no permite el descubrimiento, usa «Conexión manual».".into());
         }
-        let mut last = String::new();
-        for (_, addrs) in candidates {
-            for addr in addrs {
-                match self.join_group_at(addr, &code).await {
-                    Ok(()) => return Ok(()),
-                    Err(e) => last = e,
-                }
+        let mut last = None;
+        for (name, group_name, cands) in devices {
+            tracing::info!("Unirse a «{group_name}» a través de «{name}» (descubierto)");
+            match self.join_with(&cands, &code).await {
+                Ok(_) => return Ok(()),
+                // Un rechazo (código incorrecto, bloqueado…) es definitivo: no se
+                // prueba con otras direcciones ni equipos para no gastar intentos.
+                Err(e @ LinkError::Rejected(..)) => return Err(e.user_message()),
+                Err(e) => last = Some(e),
             }
         }
-        Err(last)
+        Err(last.map(|e| e.user_message()).unwrap_or_default())
+    }
+
+    /// Unión manual: dirección IP o nombre del equipo, puerto opcional y código.
+    /// Usa exactamente el mismo emparejamiento y autenticación que la automática.
+    /// La dirección solo se guarda si `remember` es verdadero.
+    pub async fn join_group_manual(&self, host: &str, port: Option<u16>, code: &str, remember: bool) -> Result<(), String> {
+        let code = crate::auth::normalize_code(code).ok_or("El código debe tener 8 cifras.")?;
+        let (host, port_in_host) = crate::netpath::parse_host(host)?;
+        let port = port.or(port_in_host).unwrap_or(DEFAULT_PORT);
+        tracing::info!("Unión manual: anfitrión «{host}», puerto TCP {port}");
+        let cands = match crate::netpath::resolve(&host, port).await {
+            Ok(c) if !c.is_empty() => c,
+            Ok(_) | Err(_) => {
+                tracing::warn!("Unión manual: no se pudo resolver «{host}»");
+                return Err(format!("No se encuentra el equipo «{host}» en la red. Prueba con su dirección IP."));
+            }
+        };
+        let (via, remote) = self.join_with(&cands, &code).await.map_err(|e| e.user_message())?;
+        self.report_discovery_gap(&host, via, &remote);
+        if remember {
+            let mut s = self.inner.settings.lock().unwrap();
+            let entry = format!("{host}|{port}");
+            if !s.manual_peers.contains(&entry) {
+                s.manual_peers.push(entry);
+            }
+            drop(s);
+            self.inner.save_settings();
+        }
+        Ok(())
     }
 
     /// Emparejamiento contra una dirección concreta (pruebas y diagnóstico).
     pub async fn join_group_at(&self, addr: SocketAddr, code: &str) -> Result<(), String> {
         let code = crate::auth::normalize_code(code).ok_or("El código debe tener 8 cifras.")?;
-        let group = crate::peer::pair_as_joiner(&self.inner, addr, &code).await?;
+        self.join_with(&[Candidate { addr, source: AddrSource::Manual }], &code).await.map(|_| ()).map_err(|e| e.user_message())
+    }
+
+    /// Tras una unión manual que ha funcionado, deja constancia en el registro
+    /// de por qué no lo consiguió la automática: cada uso de la conexión
+    /// manual es un caso que el descubrimiento debería resolver.
+    fn report_discovery_gap(&self, host: &str, via: Candidate, remote: &str) {
+        let inner = &self.inner;
+        let health = inner.discovery_health.lock().unwrap().clone();
+        let disc = if !inner.cfg.discovery {
+            "el descubrimiento automático está desactivado".to_string()
+        } else if health.is_empty() {
+            "mDNS y baliza UDP activos en este equipo".to_string()
+        } else {
+            health.join("; ")
+        };
+        let ifs: Vec<String> =
+            crate::netpath::local_interfaces().iter().filter(|i| i.ip.is_ipv4()).map(|i| format!("{} {}/{}", i.name, i.ip, i.prefix)).collect();
+        let nearby = inner.nearby.lock().unwrap();
+        let msg = match nearby.get(remote) {
+            None => format!(
+                "el equipo no se había descubierto: no ha llegado ningún anuncio suyo por mDNS ni por la baliza UDP. Probablemente la red bloquea multicast/broadcast entre equipos o están en VLAN distintas ({disc}; interfaces locales: {})",
+                ifs.join(", ")
+            ),
+            Some(n) if !n.addrs.iter().any(|(c, _)| c.addr == via.addr) => format!(
+                "el equipo se había descubierto, pero con otras direcciones ({}) y no con la que ha funcionado",
+                n.addrs.iter().map(|(c, _)| format!("{} vía {}", c.addr, c.source.text())).collect::<Vec<_>>().join(", ")
+            ),
+            Some(n) if !n.advert.pairing => {
+                "el equipo se había descubierto con esta dirección, pero no anunciaba un código abierto (¿se pulsó «Añadir equipo» justo antes?)".to_string()
+            }
+            Some(_) => "el equipo se había descubierto con esta misma dirección: la unión automática debería haber funcionado; revisa los intentos anteriores en este registro".to_string(),
+        };
+        tracing::warn!("Unión manual con «{host}» correcta por {}: la conexión automática no lo consiguió porque {msg}", via.addr);
+    }
+
+    async fn join_with(&self, cands: &[Candidate], code: &str) -> Result<(Candidate, String), LinkError> {
+        let (group, via, remote) = match crate::peer::pair_as_joiner(&self.inner, cands, code).await {
+            Ok(r) => r,
+            Err(e) => {
+                self.inner.note_link_error(&e);
+                tracing::warn!("Emparejamiento fallido: {}", e.user_message().replace('\n', " "));
+                return Err(e);
+            }
+        };
+        *self.inner.lnp_blocked.lock().unwrap() = None;
         {
             let mut s = self.inner.settings.lock().unwrap();
             s.group = Some(group.clone());
             s.known.clear();
         }
+        self.inner.forget_members();
         self.inner.save_settings();
         self.inner.disconnect_all();
         self.inner.peers.lock().unwrap().clear();
         self.inner.refresh_advert();
         self.inner.event("info", format!("Unido a «{}»", group.name));
-        // Conectamos ya con el equipo que nos ha emparejado.
-        self.connect_to(addr);
-        Ok(())
+        // Conectamos ya con el equipo que nos ha emparejado, por la misma dirección.
+        if via.source == AddrSource::Manual {
+            self.connect_to(via.addr);
+        } else {
+            self.inner.learn_addr(&remote, Candidate { addr: via.addr, source: AddrSource::Learned });
+        }
+        Ok((via, remote))
     }
 
     pub fn leave_group(&self) {
@@ -534,13 +797,26 @@ impl Engine {
         self.inner.disconnect_all();
         self.inner.peers.lock().unwrap().clear();
         self.inner.manual.lock().unwrap().clear();
+        self.inner.forget_members();
+        self.inner.settings.lock().unwrap().manual_peers.clear();
+        self.inner.save_settings();
         self.inner.refresh_advert();
         self.inner.event("info", "Has salido del grupo".into());
     }
 
     /// Conecta (y reconecta si se pierde) con una dirección concreta.
     pub fn connect_to(&self, addr: SocketAddr) {
-        self.inner.manual.lock().unwrap().insert(addr, (None, Instant::now() - Duration::from_secs(60)));
+        self.inner.manual.lock().unwrap().insert(addr, ManualTarget { id: None, next: Instant::now(), fails: 0 });
+    }
+
+    /// Direcciones manuales guardadas a petición del usuario.
+    pub fn remembered_addresses(&self) -> Vec<String> {
+        self.inner.settings.lock().unwrap().manual_peers.iter().map(|e| e.replace('|', ":")).collect()
+    }
+
+    pub fn forget_addresses(&self) {
+        self.inner.settings.lock().unwrap().manual_peers.clear();
+        self.inner.save_settings();
     }
 
     pub fn ack_conflicts(&self) {
@@ -585,6 +861,18 @@ impl Engine {
     pub fn snapshot(&self) -> UiState {
         build_snapshot(&self.inner)
     }
+}
+
+fn bind_listener_v6(port: u16) -> std::io::Result<tokio::net::TcpListener> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let s = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
+    s.set_only_v6(true)?;
+    #[cfg(unix)]
+    s.set_reuse_address(true)?;
+    s.bind(&SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, port)).into())?;
+    s.listen(128)?;
+    s.set_nonblocking(true)?;
+    tokio::net::TcpListener::from_std(s.into())
 }
 
 async fn bind_listener(port: Option<u16>) -> std::io::Result<tokio::net::TcpListener> {
@@ -642,6 +930,27 @@ fn scanner_thread(inner: Arc<Inner>, ctx: Arc<FolderCtx>, rx: std::sync::mpsc::R
         }
         first = false;
         let out = scanner.scan(&ctx.index, &inner.me());
+        if out.meta_missing {
+            tracing::warn!(
+                "Ha desaparecido la carpeta interna de {}: la carpeta se ha sustituido o el disco se ha desmontado. No se propaga ningún borrado; se vuelve a recibir lo que falte.",
+                ctx.root.display()
+            );
+            inner.event("warn", "La carpeta sincronizada ha cambiado por completo (¿disco desconectado?). No se borrará nada en los demás equipos.".into());
+            {
+                let mut idx = ctx.index.lock().unwrap();
+                idx.entries.clear();
+                idx.dirty = true;
+            }
+            let _ = fsops::ensure_meta(&ctx.root);
+            // Los demás deben dejar de contar con nuestro índice anterior.
+            for p in inner.peers.lock().unwrap().values() {
+                if let Some(c) = &p.conn {
+                    crate::peer::send_full_index(&c.ctrl, Vec::new());
+                }
+            }
+            wait = quick;
+            continue;
+        }
         let root_missing = out.errors.iter().any(|(p, _)| p.is_empty());
         *ctx.root_error.lock().unwrap() =
             root_missing.then(|| "La carpeta sincronizada no está disponible (¿disco desconectado?).".to_string());
@@ -655,7 +964,7 @@ fn scanner_thread(inner: Arc<Inner>, ctx: Arc<FolderCtx>, rx: std::sync::mpsc::R
             inner.broadcast_entries(out.changed);
         }
         if out.tombstoned > 0 {
-            inner.event("local", format!("{} archivo(s) borrado(s) en este equipo (no se borran en los demás)", out.tombstoned));
+            inner.event("local", format!("{} archivo(s) borrado(s) en este equipo: se eliminan también en los demás (copia en su papelera interna)", out.tombstoned));
             inner.broadcast_entries(out.tombstones);
         }
         let _ = ctx.index.lock().unwrap().save();
@@ -681,108 +990,175 @@ fn scanner_thread(inner: Arc<Inner>, ctx: Arc<FolderCtx>, rx: std::sync::mpsc::R
 async fn discovery_loop(inner: Arc<Inner>, mut rx: mpsc::UnboundedReceiver<DiscoveryEvent>) {
     while let Some(ev) = rx.recv().await {
         let now = Instant::now();
+        let mut reappeared = None;
         let mut nearby = inner.nearby.lock().unwrap();
         match ev {
             DiscoveryEvent::Seen(s) => {
+                let is_new = !nearby.contains_key(&s.advert.device_id);
                 let n = nearby.entry(s.advert.device_id.clone()).or_insert_with(|| Nearby {
                     advert: s.advert.clone(),
                     addrs: Vec::new(),
-                    first_seen: now,
                     last_seen: now,
-                    next_dial: now,
-                    fails: 0,
-                    error: None,
-                    dialing: false,
                 });
+                if is_new {
+                    reappeared = Some(s.advert.device_id.clone());
+                }
+                if is_new || n.advert.group_id != s.advert.group_id || n.advert.pairing != s.advert.pairing {
+                    tracing::info!(
+                        "Descubierto «{}» (id {}, grupo «{}», {}acepta equipos, protocolo v{})",
+                        s.advert.name,
+                        &s.advert.device_id[..8.min(s.advert.device_id.len())],
+                        if s.advert.group_name.is_empty() { "ninguno" } else { &s.advert.group_name },
+                        if s.advert.pairing { "" } else { "no " },
+                        s.advert.proto
+                    );
+                }
                 n.advert = s.advert;
                 n.last_seen = now;
-                for a in s.addrs {
-                    if !n.addrs.contains(&a) {
-                        n.addrs.insert(0, a);
+                for c in s.addrs {
+                    match n.addrs.iter_mut().find(|(x, _)| x.addr == c.addr) {
+                        Some((x, seen)) => {
+                            *seen = now;
+                            if c.source < x.source {
+                                x.source = c.source;
+                            }
+                        }
+                        None => {
+                            let ifs = crate::netpath::local_interfaces();
+                            let iface = crate::netpath::interface_for(c.addr.ip(), &ifs).map(|i| i.name.clone());
+                            tracing::info!(
+                                "«{}» anuncia {} vía {}{}, interfaz local: {}",
+                                n.advert.name,
+                                c.addr,
+                                c.source.text(),
+                                s.from.map(|f| format!(" (paquete recibido desde {f})")).unwrap_or_default(),
+                                iface.as_deref().unwrap_or("ninguna en esa subred")
+                            );
+                            n.addrs.push((c, now));
+                        }
                     }
                 }
-                n.addrs.truncate(6);
+                // Olvida direcciones que llevan mucho sin anunciarse y limita la lista.
+                n.addrs.retain(|(_, seen)| now.duration_since(*seen) < Duration::from_secs(300));
+                n.addrs.sort_by_key(|(_, seen)| std::cmp::Reverse(*seen));
+                n.addrs.truncate(16);
             }
             DiscoveryEvent::Gone(id) => {
-                nearby.remove(&id);
+                if let Some(n) = nearby.remove(&id) {
+                    tracing::info!("«{}» ya no se anuncia en la red", n.advert.name);
+                }
+            }
+        }
+        drop(nearby);
+        // Reaparece: se reintenta ya, sin esperar a la espera creciente.
+        // (Orden de cerrojos: `dial` nunca se toma con `nearby` tomado.)
+        if let Some(id) = reappeared {
+            if let Some(d) = inner.dial.lock().unwrap().get_mut(&id) {
+                d.next = now;
+                d.fails = 0;
             }
         }
     }
 }
 
 async fn connector_loop(inner: Arc<Inner>) {
+    let mut tick = 0u64;
     loop {
         tokio::time::sleep(Duration::from_millis(1000)).await;
+        tick += 1;
         let Some(group) = inner.group() else { continue };
         let now = Instant::now();
         let connected: std::collections::HashSet<String> =
             inner.peers.lock().unwrap().iter().filter(|(_, p)| p.conn.is_some()).map(|(id, _)| id.clone()).collect();
 
-        // Equipos descubiertos del mismo grupo.
-        let mut to_dial = Vec::new();
+        // Miembros del grupo con alguna dirección conocida: descubiertos ahora,
+        // aprendidos en conexiones anteriores o comunicados por otros miembros.
+        let mut members: std::collections::HashSet<String> = inner.book.lock().unwrap().keys().cloned().collect();
         {
             let mut nearby = inner.nearby.lock().unwrap();
             nearby.retain(|_, n| now.duration_since(n.last_seen) < Duration::from_secs(120) || n.advert.group_id == group.id);
-            for (id, n) in nearby.iter_mut() {
-                if n.advert.group_id != group.id || n.advert.proto != PROTOCOL_VERSION {
+            members.extend(nearby.iter().filter(|(_, n)| n.advert.group_id == group.id && n.advert.proto == PROTOCOL_VERSION).map(|(id, _)| id.clone()));
+        }
+        members.remove(&inner.my_id);
+        let mut to_dial = Vec::new();
+        {
+            let mut dial = inner.dial.lock().unwrap();
+            for id in members {
+                if connected.contains(&id) {
+                    if let Some(d) = dial.get_mut(&id) {
+                        d.fails = 0;
+                        d.error = None;
+                    }
                     continue;
                 }
-                if connected.contains(id) {
-                    n.fails = 0;
-                    n.error = None;
+                let cands = inner.candidates_for(&id, &group.id);
+                if cands.is_empty() {
                     continue;
                 }
-                if n.dialing || now < n.next_dial || n.addrs.is_empty() {
+                let d = dial.entry(id.clone()).or_insert(DialState { since: now, next: now, fails: 0, error: None, dialing: false });
+                if d.dialing || now < d.next {
                     continue;
                 }
                 // Para no abrir dos conexiones a la vez, marca el equipo de id
                 // menor; el otro solo marca si no hay conexión pasado un rato.
-                let my_turn = inner.my_id < *id || now.duration_since(n.first_seen) > Duration::from_secs(6);
+                let my_turn = inner.my_id < id || now.duration_since(d.since) > Duration::from_secs(6);
                 if my_turn {
-                    n.dialing = true;
-                    to_dial.push((id.clone(), n.addrs.clone()));
+                    d.dialing = true;
+                    to_dial.push((id, cands, d.fails >= 2));
                 }
             }
         }
-        for (id, addrs) in to_dial {
+        for (id, addrs, quiet) in to_dial {
             let i = inner.clone();
             tokio::spawn(async move {
-                let mut err = String::new();
-                let mut ok = false;
-                for a in addrs {
-                    match crate::peer::dial(i.clone(), a).await {
-                        Ok(()) => {
-                            ok = true;
-                            break;
-                        }
-                        Err(e) => err = e,
+                let (ok, err) = match crate::peer::dial(i.clone(), &addrs, quiet).await {
+                    Ok(_) => (true, String::new()),
+                    Err(e) => {
+                        i.note_link_error(&e);
+                        (false, e.user_message().split("\n").next().unwrap_or_default().to_string())
                     }
-                }
-                let mut nearby = i.nearby.lock().unwrap();
-                if let Some(n) = nearby.get_mut(&id) {
-                    n.dialing = false;
+                };
+                let mut dial = i.dial.lock().unwrap();
+                if let Some(d) = dial.get_mut(&id) {
+                    d.dialing = false;
                     if ok {
-                        n.fails = 0;
-                        n.error = None;
-                        n.next_dial = Instant::now() + Duration::from_secs(2);
+                        d.fails = 0;
+                        d.error = None;
+                        d.next = Instant::now() + Duration::from_secs(2);
                     } else {
-                        n.fails += 1;
-                        n.error = Some(err);
-                        n.next_dial = Instant::now() + Duration::from_secs((1u64 << n.fails.min(5)).min(30));
+                        d.fails += 1;
+                        d.error = Some(err);
+                        d.next = Instant::now() + Duration::from_secs((1u64 << d.fails.min(5)).min(30));
                     }
                 }
             });
         }
 
-        // Direcciones manuales.
+        // Direcciones guardadas por el usuario (se resuelven de nuevo cada vez).
+        let remembered = inner.settings.lock().unwrap().manual_peers.clone();
+        if !remembered.is_empty() && tick % 15 == 1 {
+            let i = inner.clone();
+            tokio::spawn(async move {
+                for e in remembered {
+                    let (host, port) = e.split_once('|').unwrap_or((&e, "47800"));
+                    let port = port.parse().unwrap_or(DEFAULT_PORT);
+                    if let Ok(cands) = crate::netpath::resolve(host, port).await {
+                        let mut m = i.manual.lock().unwrap();
+                        for c in cands {
+                            m.entry(c.addr).or_insert(ManualTarget { id: None, next: Instant::now(), fails: 0 });
+                        }
+                    }
+                }
+            });
+        }
+
+        // Direcciones manuales (con espera creciente si fallan).
         let manual: Vec<SocketAddr> = {
             let mut m = inner.manual.lock().unwrap();
             m.iter_mut()
-                .filter(|(_, (id, last))| {
-                    id.as_ref().is_none_or(|id| !connected.contains(id)) && now.duration_since(*last) > Duration::from_secs(3)
-                })
-                .map(|(a, v)| {
-                    v.1 = now;
+                .filter(|(_, t)| t.id.as_ref().is_none_or(|id| !connected.contains(id)) && now >= t.next)
+                .map(|(a, t)| {
+                    t.next = now + Duration::from_secs(60); // se ajusta al terminar el intento
                     *a
                 })
                 .collect()
@@ -790,7 +1166,25 @@ async fn connector_loop(inner: Arc<Inner>) {
         for a in manual {
             let i = inner.clone();
             tokio::spawn(async move {
-                let _ = crate::peer::dial(i, a).await;
+                let quiet = i.manual.lock().unwrap().get(&a).is_some_and(|t| t.fails >= 2);
+                let r = crate::peer::dial(i.clone(), &[Candidate { addr: a, source: AddrSource::Manual }], quiet).await;
+                if let Err(e) = &r {
+                    i.note_link_error(e);
+                }
+                let mut m = i.manual.lock().unwrap();
+                if let Some(t) = m.get_mut(&a) {
+                    match r {
+                        Ok(id) => {
+                            t.id = Some(id);
+                            t.fails = 0;
+                            t.next = Instant::now() + Duration::from_secs(3);
+                        }
+                        Err(_) => {
+                            t.fails += 1;
+                            t.next = Instant::now() + Duration::from_secs((3u64 << t.fails.min(4)).min(60));
+                        }
+                    }
+                }
             });
         }
     }
@@ -823,6 +1217,9 @@ async fn status_loop(inner: Arc<Inner>) {
             *inner.last_status.lock().unwrap() = st.clone();
             inner.broadcast(Msg::Status(st));
         }
+        if ticks % 120 == 0 {
+            inner.broadcast_members();
+        }
         // Caducidad del código de emparejamiento.
         let expired = inner.pairing.lock().unwrap().as_ref().is_some_and(|p| p.expires <= Instant::now());
         if expired {
@@ -836,6 +1233,7 @@ async fn maintenance_loop(inner: Arc<Inner>) {
     let mut last_cleanup = Instant::now() - Duration::from_secs(3600);
     loop {
         tokio::time::sleep(Duration::from_secs(2)).await;
+        inner.persist_book();
         if let Some(f) = inner.folder() {
             let _ = f.index.lock().unwrap().save();
             if last_cleanup.elapsed() > Duration::from_secs(3600) {
@@ -880,6 +1278,7 @@ fn build_snapshot(inner: &Inner) -> UiState {
         locked: p.failures >= MAX_PAIR_FAILURES,
     });
 
+    let dial = inner.dial.lock().unwrap();
     let nearby = inner.nearby.lock().unwrap();
     let group_id = s.group.as_ref().map(|g| g.id.clone());
     let mut devices: Vec<DeviceView> = inner
@@ -890,11 +1289,14 @@ fn build_snapshot(inner: &Inner) -> UiState {
         .map(|(id, p)| {
             let near = nearby.get(id);
             let (state, detail) = if p.conn.is_none() {
+                let d = dial.get(id);
                 match near {
-                    Some(n) if n.advert.group_id == group_id.clone().unwrap_or_default() => match &n.error {
-                        Some(e) if n.fails >= 2 => (DeviceState::Error, format!("Detectado pero sin conexión: {e}")),
-                        _ => (DeviceState::Connecting, "Conectando…".into()),
+                    Some(n) if n.advert.group_id == group_id.clone().unwrap_or_default() => match d.and_then(|d| d.error.as_ref().filter(|_| d.fails >= 2)) {
+                        Some(e) => (DeviceState::Error, format!("Detectado pero sin conexión: {e}")),
+                        None => (DeviceState::Connecting, "Conectando…".into()),
                     },
+                    // Sin anuncios pero con direcciones conocidas: se sigue intentando.
+                    _ if d.is_some_and(|d| d.dialing && d.fails < 2) => (DeviceState::Connecting, "Conectando…".into()),
                     _ => (DeviceState::Offline, "Desconectado".into()),
                 }
             } else if !p.index_ready {
@@ -926,9 +1328,9 @@ fn build_snapshot(inner: &Inner) -> UiState {
         let known: std::collections::HashSet<String> = devices.iter().map(|d| d.id.clone()).collect();
         for (id, n) in nearby.iter() {
             if &n.advert.group_id == gid && !known.contains(id) {
-                let (state, detail) = match &n.error {
-                    Some(e) if n.fails >= 2 => (DeviceState::Error, format!("Detectado pero sin conexión: {e}")),
-                    _ => (DeviceState::Connecting, "Conectando…".into()),
+                let (state, detail) = match dial.get(id).and_then(|d| d.error.as_ref().filter(|_| d.fails >= 2)) {
+                    Some(e) => (DeviceState::Error, format!("Detectado pero sin conexión: {e}")),
+                    None => (DeviceState::Connecting, "Conectando…".into()),
                 };
                 devices.push(DeviceView { id: id.clone(), name: n.advert.name.clone(), state, detail, pending_files: 0, pending_bytes: 0 });
             }
@@ -951,8 +1353,12 @@ fn build_snapshot(inner: &Inner) -> UiState {
     let detected_unreachable = devices.iter().any(|d| d.state == DeviceState::Error && d.detail.starts_with("Detectado"));
     let in_group_nearby = group_id.as_ref().is_some_and(|g| nearby.values().any(|n| &n.advert.group_id == g));
     drop(nearby);
+    drop(dial);
 
-    let network_warning = if !has_lan_ipv4() {
+    let lnp = inner.lnp_blocked.lock().unwrap().is_some_and(|t| t.elapsed() < Duration::from_secs(120));
+    let network_warning = if lnp {
+        Some(crate::netpath::MACOS_LNP_HELP.to_string())
+    } else if !has_lan_ipv4() {
         Some("Este equipo no tiene conexión a una red local.".to_string())
     } else if detected_unreachable {
         Some("Se detectan otros equipos pero no se puede conectar con ellos. Probablemente un cortafuegos o la red bloquea las conexiones directas entre equipos (aislamiento de clientes). Permite Show File Sync en el cortafuegos o usa una red sin aislamiento.".to_string())

@@ -16,6 +16,7 @@
 //!   --puerto N           puerto TCP (por defecto 47800 o uno libre)
 //!   --sin-descubrimiento desactiva mDNS y baliza
 //!   --conectar IP:PUERTO conecta con esa dirección (repetible)
+//!   --anfitrion HOST[:P] con «unir»: conexión manual a ese equipo, sin descubrimiento
 //!   --json               imprime el estado completo en JSON
 //! ```
 
@@ -25,17 +26,22 @@ use std::time::Duration;
 
 fn usage() -> ! {
     eprintln!(
-        "uso: showfilesync-cli --data DIR --folder CARPETA [--nombre N] [--puerto P] [--sin-descubrimiento] [--conectar IP:PUERTO] [--json] <crear|unir CÓDIGO|ejecutar>"
+        "uso: showfilesync-cli --data DIR --folder CARPETA [--nombre N] [--puerto P] [--sin-descubrimiento] [--conectar IP:PUERTO] [--anfitrion HOST[:PUERTO]] [--json] <crear|unir CÓDIGO|ejecutar>"
     );
     std::process::exit(2)
 }
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()))
-        .with_target(false)
-        .init();
+    {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+        use tracing_subscriber::Layer;
+        let console = tracing_subscriber::fmt::layer()
+            .with_target(false)
+            .with_filter(tracing_subscriber::EnvFilter::new(std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into())));
+        tracing_subscriber::registry().with(console).with(sfs_core::diag::layer()).init();
+    }
     let mut args = std::env::args().skip(1);
     let mut data = None;
     let mut folder = None;
@@ -44,6 +50,7 @@ async fn main() {
     let mut discovery = true;
     let mut connect = Vec::new();
     let mut json = false;
+    let mut host: Option<String> = None;
     let mut cmd = Vec::new();
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -54,11 +61,13 @@ async fn main() {
             "--sin-descubrimiento" => discovery = false,
             "--conectar" => connect.push(args.next().and_then(|a| a.parse().ok()).unwrap_or_else(|| usage())),
             "--json" => json = true,
+            "--anfitrion" => host = args.next(),
             "-h" | "--help" => usage(),
             _ => cmd.push(a),
         }
     }
     let (Some(data), Some(folder)) = (data, folder) else { usage() };
+    let _ = sfs_core::diag::init_file(&data.join("logs"));
     let mut cfg = EngineConfig::new(data);
     cfg.device_name = name;
     cfg.listen_port = port;
@@ -83,6 +92,13 @@ async fn main() {
         }
         Some("unir") => {
             let code = cmd.get(1).cloned().unwrap_or_else(|| usage());
+            if let Some(h) = &host {
+                if let Err(e) = engine.join_group_manual(h, None, &code, false).await {
+                    eprintln!("No se pudo unir: {e}");
+                    std::process::exit(1);
+                }
+                println!("Unido al grupo «{}»", engine.snapshot().group.map(|g| g.name).unwrap_or_default());
+            } else {
             // Damos tiempo al descubrimiento.
             let mut last = String::new();
             let mut joined = false;
@@ -101,6 +117,7 @@ async fn main() {
                 std::process::exit(1);
             }
             println!("Unido al grupo «{}»", engine.snapshot().group.map(|g| g.name).unwrap_or_default());
+            }
         }
         Some("ejecutar") | None => {}
         _ => usage(),

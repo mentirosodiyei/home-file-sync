@@ -292,8 +292,8 @@ pub fn looks_like_macos_lnp_block(attempts: &[Attempt]) -> bool {
 }
 
 pub const MACOS_LNP_HELP: &str =
-    "macOS está bloqueando las conexiones de Show File Sync hacia la red local. \
-Abre Ajustes del Sistema → Privacidad y seguridad → Red local y activa Show File Sync. \
+    "macOS está bloqueando las conexiones de Home File Sync hacia la red local. \
+Abre Ajustes del Sistema → Privacidad y seguridad → Red local y activa Home File Sync. \
 Si ya estaba activado, desactívalo y vuelve a activarlo, y reinicia la aplicación.";
 
 /// Mensaje comprensible para el usuario a partir de los intentos fallidos.
@@ -309,7 +309,7 @@ pub fn explain(attempts: &[Attempt]) -> String {
         if attempts.iter().any(|a| a.phase == Phase::Resolve) {
             "No se encuentra ese nombre de equipo en la red. Prueba con su dirección IP.".into()
         } else if all(NetErrKind::Refused) {
-            "El equipo rechaza la conexión. Comprueba que Show File Sync está abierto en él y que el puerto es correcto.".into()
+            "El equipo rechaza la conexión. Comprueba que Home File Sync está abierto en él y que el puerto es correcto.".into()
         } else if all(NetErrKind::TimedOut) {
             "El equipo no responde. Probablemente un cortafuegos bloquea la conexión o la red aísla a los equipos entre sí.".into()
         } else if tcp.iter().all(|a| {

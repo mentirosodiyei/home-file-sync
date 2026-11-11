@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compila Show File Sync para macOS (universal: Apple Silicon + Intel) y lo firma.
+# Compila Home File Sync para macOS (universal: Apple Silicon + Intel) y lo firma.
 #
 # La firma importa: macOS asocia el permiso «Red local» a la firma del programa.
 # Con la firma automática del enlazador (la que queda sin este paso) el
@@ -27,9 +27,9 @@ echo "Identidad de firma: $( [ "$ID" = "-" ] && echo "ad hoc" || security find-i
 rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
 APPLE_SIGNING_IDENTITY="$ID" npx --yes @tauri-apps/cli@2 build --target universal-apple-darwin --bundles app,dmg
 
-APP="../../target/universal-apple-darwin/release/bundle/macos/Show File Sync.app"
+APP="../../target/universal-apple-darwin/release/bundle/macos/Home File Sync.app"
 echo
 echo "Comprobación de la firma:"
 codesign --verify --deep --strict "$APP" && echo "  firma válida"
 codesign -dv "$APP" 2>&1 | grep -E "^Identifier|^TeamIdentifier|^Info.plist|flags" | sed 's/^/  /'
-otool -arch all -l "$APP/Contents/MacOS/show-file-sync" | grep -A2 LC_UUID | grep uuid | sed 's/^ */  UUID /'
+otool -arch all -l "$APP/Contents/MacOS/home-file-sync" | grep -A2 LC_UUID | grep uuid | sed 's/^ */  UUID /'

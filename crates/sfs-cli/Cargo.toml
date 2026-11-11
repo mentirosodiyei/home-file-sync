@@ -1,12 +1,12 @@
 [package]
 name = "sfs-cli"
-description = "Show File Sync sin interfaz gráfica (servidores, pruebas y diagnóstico)"
+description = "Home File Sync sin interfaz gráfica (servidores, pruebas y diagnóstico)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "showfilesync-cli"
+name = "homefilesync-cli"
 path = "src/main.rs"
 
 [dependencies]

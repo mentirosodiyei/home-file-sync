@@ -1,5 +1,15 @@
 # Historial de versiones
 
+## 0.2.0 — Home File Sync
+La app pasa a ser de uso doméstico y se llama **Home File Sync**. No es compatible con Show File Sync: usa otro servicio de red, otros puertos y otra carpeta interna (`.homefilesync`).
+- **Varias carpetas compartidas por equipo, cada una con sus propios miembros y su código** (por ejemplo, una para la pareja y otra para el padre y el hijo).
+- **Modo por carpeta y equipo:**
+  - *sincronizada*;
+  - *copia de seguridad*: solo recibe y conserva lo que se borra en el original.
+- **Nombres locales** para los demás equipos: solo los ve quien los pone.
+- **Recibir desde el móvil o cualquier navegador** escaneando un código QR, sin instalar nada.
+- Las carpetas que esperan equipos aparecen solas en «Unirme con código».
+
 ## 0.1.4
 - **Carpeta `old` visible:** cuando un archivo cambia, la versión nueva queda en su sitio y la anterior pasa a `old/` (misma subcarpeta, fecha en el nombre).
   - `old` se sincroniza, así que todos los equipos tienen las versiones anteriores, también el que hizo el cambio.

@@ -87,7 +87,7 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for e in std::fs::read_dir(dir).unwrap().flatten() {
         let p = e.path();
-        if p.file_name().unwrap() == ".showfilesync" {
+        if p.file_name().unwrap() == ".homefilesync" {
             continue;
         }
         if p.is_dir() {
@@ -253,7 +253,7 @@ async fn deletions_propagate_to_everyone_and_go_to_trash() {
     std::fs::remove_file(a.root().join("borrame.pptx")).unwrap();
     wait_for("borrado en B y C", 30, || b.read("borrame.pptx").is_none() && c.read("borrame.pptx").is_none()).await;
     // Se conserva en la papelera interna de quien lo recibe.
-    let trash = b.root().join(".showfilesync/papelera");
+    let trash = b.root().join(".homefilesync/papelera");
     assert!(walk(&trash).iter().any(|p| std::fs::read(p).ok().as_deref() == Some(b"importante")), "copia en la papelera");
 
     // Borrar una carpeta entera en B la borra en A y C, sin dejar carpetas vacías.
@@ -342,7 +342,7 @@ async fn interrupted_transfer_resumes() {
     a.write("video grande.mov", &data);
     group(&a, &[&b]).await;
     let hash = blake3::hash(&data).to_hex().to_string();
-    let part = b.root().join(".showfilesync/tmp").join(format!("{hash}.sfspart"));
+    let part = b.root().join(".homefilesync/tmp").join(format!("{hash}.sfspart"));
     wait_for("descarga a medias", 30, || std::fs::metadata(&part).map(|m| m.len() > 3_000_000).unwrap_or(false)).await;
     let first = b.engine.stats().bytes_down;
     // "Se desconecta el cable": el equipo B desaparece.
@@ -370,7 +370,7 @@ async fn corrupted_partial_is_detected_and_redownloaded() {
     a.write("clip.mp4", &data);
     group(&a, &[&b]).await;
     let hash = blake3::hash(&data).to_hex().to_string();
-    let part = b.root().join(".showfilesync/tmp").join(format!("{hash}.sfspart"));
+    let part = b.root().join(".homefilesync/tmp").join(format!("{hash}.sfspart"));
     wait_for("descarga a medias", 30, || std::fs::metadata(&part).map(|m| m.len() > 1_000_000).unwrap_or(false)).await;
     b.engine.shutdown().await;
     // Corrompemos el temporal (fallo de disco, apagado brusco…).
@@ -488,7 +488,7 @@ async fn malicious_peer_cannot_escape_folder() {
         .send(&Msg::IndexPage {
             reset: true,
             last: true,
-            entries: vec![evil_entry("../fuera.txt"), evil_entry("/etc/evil"), evil_entry(".showfilesync/tmp/x")],
+            entries: vec![evil_entry("../fuera.txt"), evil_entry("/etc/evil"), evil_entry(".homefilesync/tmp/x")],
         })
         .await
         .unwrap();

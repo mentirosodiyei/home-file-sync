@@ -1,9 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Show File Sync",
-  "mainBinaryName": "show-file-sync",
-  "version": "0.1.4",
-  "identifier": "org.showfilesync.app",
+  "productName": "Home File Sync",
+  "mainBinaryName": "home-file-sync",
+  "version": "0.2.0",
+  "identifier": "org.homefilesync.app",
   "build": {
     "frontendDist": "../ui"
   },
@@ -12,7 +12,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Show File Sync",
+        "title": "Home File Sync",
         "width": 540,
         "height": 760,
         "minWidth": 420,
@@ -30,7 +30,7 @@
     "targets": "all",
     "category": "Utility",
     "shortDescription": "Sincroniza carpetas entre equipos de la misma red, sin configurar nada.",
-    "copyright": "Show File Sync contributors",
+    "copyright": "Home File Sync contributors",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

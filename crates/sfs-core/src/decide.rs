@@ -2,12 +2,12 @@
 //!
 //! Reglas (las carpetas se comportan como una sola):
 //! * Un borrado es una versión más del archivo: si es posterior a la que hay
-//!   aquí, el archivo se elimina (se mueve a `.showfilesync/papelera`).
+//!   aquí, el archivo se elimina (se mueve a `.homefilesync/papelera`).
 //! * Si un equipo edita mientras otro borra (cambios independientes), gana la
 //!   edición: nunca se pierde contenido modificado.
 //! * Mismo contenido (hash) = nada que transferir; solo se fusionan vectores.
 //! * Versión remota posterior = actualización (la anterior se guarda en
-//!   `.showfilesync/versiones`).
+//!   `.homefilesync/versiones`).
 //! * Versiones independientes con distinto contenido = conflicto: gana una de
 //!   forma determinista (la misma en todos los equipos) y la otra se conserva
 //!   con un nombre de conflicto. Nunca se pierde ninguna.

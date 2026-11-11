@@ -1718,6 +1718,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "home-file-sync"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sfs-core",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "html5ever"
 version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3134,6 +3151,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+
+[[package]]
 name = "quick-xml"
 version = "0.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3604,7 +3627,7 @@ dependencies = [
 
 [[package]]
 name = "sfs-cli"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "serde_json",
  "sfs-core",
@@ -3614,7 +3637,7 @@ dependencies = [
 
 [[package]]
 name = "sfs-core"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "chrono",
@@ -3626,6 +3649,7 @@ dependencies = [
  "mdns-sd",
  "notify",
  "postcard",
+ "qrcode",
  "serde",
  "serde_bytes",
  "serde_json",
@@ -3667,23 +3691,6 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
-
-[[package]]
-name = "show-file-sync"
-version = "0.1.4"
-dependencies = [
- "serde",
- "serde_json",
- "sfs-core",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tauri-plugin-single-instance",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
 
 [[package]]
 name = "signal-hook-registry"

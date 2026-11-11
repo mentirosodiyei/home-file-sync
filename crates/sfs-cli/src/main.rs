@@ -1,10 +1,10 @@
-//! `showfilesync-cli`: Show File Sync sin interfaz gráfica.
+//! `homefilesync-cli`: Home File Sync sin interfaz gráfica.
 //!
 //! Útil para equipos sin pantalla, para diagnóstico y para probar varias
 //! instancias en una misma máquina (cada una con su `--data`).
 //!
 //! ```text
-//! showfilesync-cli --data DIR --folder CARPETA [opciones] <orden>
+//! homefilesync-cli --data DIR --folder CARPETA [opciones] <orden>
 //!
 //! Órdenes:
 //!   crear            crea un grupo nuevo y muestra el código
@@ -26,7 +26,7 @@ use std::time::Duration;
 
 fn usage() -> ! {
     eprintln!(
-        "uso: showfilesync-cli --data DIR --folder CARPETA [--nombre N] [--puerto P] [--sin-descubrimiento] [--conectar IP:PUERTO] [--anfitrion HOST[:PUERTO]] [--json] <crear|unir CÓDIGO|ejecutar>"
+        "uso: homefilesync-cli --data DIR --folder CARPETA [--nombre N] [--puerto P] [--sin-descubrimiento] [--conectar IP:PUERTO] [--anfitrion HOST[:PUERTO]] [--json] <crear|unir CÓDIGO|ejecutar>"
     );
     std::process::exit(2)
 }

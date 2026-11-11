@@ -11,7 +11,7 @@ use crate::index::FileEntry;
 use serde::{Deserialize, Serialize};
 
 /// Versión del protocolo. Equipos con versiones distintas no se conectan.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Msg {
@@ -63,7 +63,7 @@ pub enum RejectReason {
 impl RejectReason {
     pub fn text(&self) -> &'static str {
         match self {
-            RejectReason::Version => "versión de Show File Sync incompatible",
+            RejectReason::Version => "versión de Home File Sync incompatible",
             RejectReason::NotInGroup => "el equipo pertenece a otro grupo",
             RejectReason::BadProof => "credenciales de grupo no válidas",
             RejectReason::PairingClosed => "el equipo no está aceptando nuevos equipos ahora",
@@ -82,6 +82,8 @@ pub struct PeerStatus {
     pub conflicts: u32,
     pub errors: u32,
     pub uploads: u32,
+    /// El equipo tiene esta carpeta como copia de seguridad (solo recibe).
+    pub backup: bool,
 }
 
 // ---------------------------------------------------------------------------

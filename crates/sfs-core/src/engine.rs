@@ -26,7 +26,13 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch, Notify};
 use tokio::task::AbortHandle;
 
-pub const DEFAULT_PORT: u16 = 47800;
+pub const DEFAULT_PORT: u16 = 47820;
+
+/// Clave de un equipo descubierto: un mismo equipo se anuncia una vez por
+/// cada carpeta compartida (grupo) que tiene.
+pub fn nkey(device_id: &str, group_id: &str) -> String {
+    format!("{device_id}/{group_id}")
+}
 const PAIRING_TTL: Duration = Duration::from_secs(15 * 60);
 const MAX_PAIR_FAILURES: u32 = 5;
 
@@ -34,7 +40,7 @@ const MAX_PAIR_FAILURES: u32 = 5;
 pub struct EngineConfig {
     pub data_dir: PathBuf,
     pub device_name: Option<String>,
-    /// Puerto TCP. `None` = 47800 si está libre, si no uno cualquiera.
+    /// Puerto TCP. `None` = 47820 si está libre, si no uno cualquiera.
     pub listen_port: Option<u16>,
     pub discovery: bool,
     pub beacon_port: u16,
@@ -277,7 +283,7 @@ impl Inner {
     /// Todas las direcciones conocidas de un equipo: descubrimiento + aprendidas.
     pub fn candidates_for(&self, id: &str, group_id: &str) -> Vec<Candidate> {
         let mut v: Vec<Candidate> = Vec::new();
-        if let Some(n) = self.nearby.lock().unwrap().get(id) {
+        if let Some(n) = self.nearby.lock().unwrap().get(&nkey(id, group_id)) {
             if n.advert.group_id == group_id && n.advert.proto == PROTOCOL_VERSION {
                 v.extend(n.addrs.iter().map(|(c, _)| *c));
             }
@@ -356,7 +362,7 @@ impl Inner {
     /// Anota un fallo de conexión: detecta el bloqueo de Red local de macOS.
     pub fn note_link_error(&self, e: &LinkError) {
         if crate::netpath::looks_like_macos_lnp_block(e.attempts()) {
-            tracing::error!("macOS deniega a Show File Sync las conexiones salientes a la red local (permiso «Red local»)");
+            tracing::error!("macOS deniega a Home File Sync las conexiones salientes a la red local (permiso «Red local»)");
             *self.lnp_blocked.lock().unwrap() = Some(Instant::now());
         } else if e.attempts().iter().any(|a| a.ok() || a.phase != crate::netpath::Phase::Tcp) {
             *self.lnp_blocked.lock().unwrap() = None;
@@ -376,8 +382,29 @@ impl Inner {
         }
     }
 
+    /// Copia de seguridad: solo recibe. No anuncia sus archivos (nadie los
+    /// descarga de aquí) y conserva lo que se borra en el original.
+    pub fn backup(&self) -> bool {
+        self.settings.lock().unwrap().mode == crate::settings::ShareMode::Backup
+    }
+
+    /// Índice que se anuncia a los demás (vacío en modo copia de seguridad).
+    pub fn announced_entries(&self) -> Vec<FileEntry> {
+        if self.backup() {
+            return Vec::new();
+        }
+        self.folder()
+            .filter(|f| f.scanned_once.load(Ordering::SeqCst))
+            .map(|f| f.index.lock().unwrap().entries.values().map(|e| e.entry.clone()).collect())
+            .unwrap_or_default()
+    }
+
     pub fn broadcast_entries(&self, entries: Vec<FileEntry>) {
         if entries.is_empty() {
+            return; // sin cambios: no despierta al planificador (evita un bucle activo)
+        }
+        if self.backup() {
+            self.wake.notify_one();
             return;
         }
         for chunk in entries.chunks(1000) {
@@ -516,7 +543,7 @@ impl Engine {
             }
             Err(e) => tracing::debug!("Sin escucha IPv6: {e}"),
         }
-        tracing::info!("Show File Sync escuchando en el puerto TCP {port} (equipo {})", &inner.my_id[..8]);
+        tracing::info!("Home File Sync escuchando en el puerto TCP {port} (equipo {})", &inner.my_id[..8]);
         let i = inner.clone();
         inner.spawn(async move { crate::transfer::scheduler_loop(i).await });
         let i = inner.clone();
@@ -619,10 +646,15 @@ impl Engine {
 
     /// Crea un grupo nuevo y abre el emparejamiento. Devuelve el código.
     pub fn create_group(&self) -> String {
-        let name = self.inner.name();
+        let name = format!("Carpeta de {}", self.inner.name());
+        self.create_group_named(&name)
+    }
+
+    /// Crea un grupo (carpeta compartida) con ese nombre. Devuelve el código.
+    pub fn create_group_named(&self, group_name: &str) -> String {
         {
             let mut s = self.inner.settings.lock().unwrap();
-            s.group = Some(Group::create(&name));
+            s.group = Some(Group::create_named(group_name));
             s.known.clear();
         }
         self.inner.forget_members();
@@ -717,6 +749,52 @@ impl Engine {
         Ok(())
     }
 
+    /// Unión con direcciones ya conocidas (las de una invitación descubierta).
+    pub async fn join_group_candidates(&self, cands: Vec<Candidate>, code: &str) -> Result<(), String> {
+        let code = crate::auth::normalize_code(code).ok_or("El código debe tener 8 cifras.")?;
+        self.join_with(&cands, &code).await.map(|_| ()).map_err(|e| e.user_message())
+    }
+
+    /// Cambia el modo de esta carpeta (sincronizada o copia de seguridad).
+    pub fn set_mode(&self, mode: crate::settings::ShareMode) {
+        self.inner.settings.lock().unwrap().mode = mode;
+        self.inner.save_settings();
+        let entries = self.inner.announced_entries();
+        for p in self.inner.peers.lock().unwrap().values() {
+            if let Some(c) = &p.conn {
+                crate::peer::send_full_index(&c.ctrl, entries.clone());
+            }
+        }
+        self.inner.wake.notify_one();
+    }
+
+    pub fn mode(&self) -> crate::settings::ShareMode {
+        self.inner.settings.lock().unwrap().mode
+    }
+
+    /// Nombre local de la carpeta compartida (no cambia el de los demás).
+    pub fn rename_group(&self, name: &str) {
+        let name: String = name.trim().chars().filter(|c| !c.is_control()).take(60).collect();
+        if name.is_empty() {
+            return;
+        }
+        if let Some(g) = self.inner.settings.lock().unwrap().group.as_mut() {
+            g.name = name;
+        }
+        self.inner.save_settings();
+        self.inner.refresh_advert();
+    }
+
+    /// Lo que anuncia este motor en la red (para un descubrimiento compartido).
+    pub fn advert(&self) -> Advert {
+        self.inner.advert()
+    }
+
+    /// Procesa un evento de un descubrimiento externo (el del hub).
+    pub fn feed_discovery(&self, ev: DiscoveryEvent) {
+        handle_discovery_event(&self.inner, ev);
+    }
+
     /// Emparejamiento contra una dirección concreta (pruebas y diagnóstico).
     pub async fn join_group_at(&self, addr: SocketAddr, code: &str) -> Result<(), String> {
         let code = crate::auth::normalize_code(code).ok_or("El código debe tener 8 cifras.")?;
@@ -738,8 +816,9 @@ impl Engine {
         };
         let ifs: Vec<String> =
             crate::netpath::local_interfaces().iter().filter(|i| i.ip.is_ipv4()).map(|i| format!("{} {}/{}", i.name, i.ip, i.prefix)).collect();
+        let gid = inner.group().map(|g| g.id).unwrap_or_default();
         let nearby = inner.nearby.lock().unwrap();
-        let msg = match nearby.get(remote) {
+        let msg = match nearby.get(&nkey(remote, &gid)) {
             None => format!(
                 "el equipo no se había descubierto: no ha llegado ningún anuncio suyo por mDNS ni por la baliza UDP. Probablemente la red bloquea multicast/broadcast entre equipos o están en VLAN distintas ({disc}; interfaces locales: {})",
                 ifs.join(", ")
@@ -971,7 +1050,7 @@ fn scanner_thread(inner: Arc<Inner>, ctx: Arc<FolderCtx>, rx: std::sync::mpsc::R
         if !ctx.scanned_once.swap(true, Ordering::SeqCst) {
             // Los equipos que conectaron antes del primer escaneo recibieron un
             // índice vacío: les enviamos el completo.
-            let entries: Vec<FileEntry> = ctx.index.lock().unwrap().entries.values().map(|e| e.entry.clone()).collect();
+            let entries = inner.announced_entries();
             for p in inner.peers.lock().unwrap().values() {
                 if let Some(c) = &p.conn {
                     crate::peer::send_full_index(&c.ctrl, entries.clone());
@@ -989,13 +1068,20 @@ fn scanner_thread(inner: Arc<Inner>, ctx: Arc<FolderCtx>, rx: std::sync::mpsc::R
 
 async fn discovery_loop(inner: Arc<Inner>, mut rx: mpsc::UnboundedReceiver<DiscoveryEvent>) {
     while let Some(ev) = rx.recv().await {
+        handle_discovery_event(&inner, ev);
+    }
+}
+
+fn handle_discovery_event(inner: &Inner, ev: DiscoveryEvent) {
+    {
         let now = Instant::now();
         let mut reappeared = None;
         let mut nearby = inner.nearby.lock().unwrap();
         match ev {
             DiscoveryEvent::Seen(s) => {
-                let is_new = !nearby.contains_key(&s.advert.device_id);
-                let n = nearby.entry(s.advert.device_id.clone()).or_insert_with(|| Nearby {
+                let key = nkey(&s.advert.device_id, &s.advert.group_id);
+                let is_new = !nearby.contains_key(&key);
+                let n = nearby.entry(key).or_insert_with(|| Nearby {
                     advert: s.advert.clone(),
                     addrs: Vec::new(),
                     last_seen: now,
@@ -1077,7 +1163,9 @@ async fn connector_loop(inner: Arc<Inner>) {
         {
             let mut nearby = inner.nearby.lock().unwrap();
             nearby.retain(|_, n| now.duration_since(n.last_seen) < Duration::from_secs(120) || n.advert.group_id == group.id);
-            members.extend(nearby.iter().filter(|(_, n)| n.advert.group_id == group.id && n.advert.proto == PROTOCOL_VERSION).map(|(id, _)| id.clone()));
+            members.extend(
+                nearby.values().filter(|n| n.advert.group_id == group.id && n.advert.proto == PROTOCOL_VERSION).map(|n| n.advert.device_id.clone()),
+            );
         }
         members.remove(&inner.my_id);
         let mut to_dial = Vec::new();
@@ -1203,6 +1291,7 @@ pub(crate) fn own_status(inner: &Inner) -> PeerStatus {
         conflicts: a.conflicts,
         errors: a.errors.values().filter(|e| e.visible).count() as u32,
         uploads: inner.active_uploads.load(Ordering::Relaxed) as u32,
+        backup: inner.backup(),
     }
 }
 
@@ -1287,7 +1376,7 @@ fn build_snapshot(inner: &Inner) -> UiState {
         .unwrap()
         .iter()
         .map(|(id, p)| {
-            let near = nearby.get(id);
+            let near = nearby.get(&nkey(id, group_id.as_deref().unwrap_or("")));
             let (state, detail) = if p.conn.is_none() {
                 let d = dial.get(id);
                 match near {
@@ -1320,19 +1409,21 @@ fn build_snapshot(inner: &Inner) -> UiState {
                 detail,
                 pending_files: p.status.pending_files,
                 pending_bytes: p.status.pending_bytes,
+                backup: p.status.backup,
             }
         })
         .collect();
     // Equipos del grupo detectados que todavía no conocemos.
     if let Some(gid) = &group_id {
         let known: std::collections::HashSet<String> = devices.iter().map(|d| d.id.clone()).collect();
-        for (id, n) in nearby.iter() {
-            if &n.advert.group_id == gid && !known.contains(id) {
+        for n in nearby.values() {
+            let id = &n.advert.device_id;
+            if &n.advert.group_id == gid && !known.contains(id) && id != &inner.my_id {
                 let (state, detail) = match dial.get(id).and_then(|d| d.error.as_ref().filter(|_| d.fails >= 2)) {
                     Some(e) => (DeviceState::Error, format!("Detectado pero sin conexión: {e}")),
                     None => (DeviceState::Connecting, "Conectando…".into()),
                 };
-                devices.push(DeviceView { id: id.clone(), name: n.advert.name.clone(), state, detail, pending_files: 0, pending_bytes: 0 });
+                devices.push(DeviceView { id: id.clone(), name: n.advert.name.clone(), state, detail, pending_files: 0, pending_bytes: 0, backup: false });
             }
         }
     }
@@ -1361,9 +1452,9 @@ fn build_snapshot(inner: &Inner) -> UiState {
     } else if !has_lan_ipv4() {
         Some("Este equipo no tiene conexión a una red local.".to_string())
     } else if detected_unreachable {
-        Some("Se detectan otros equipos pero no se puede conectar con ellos. Probablemente un cortafuegos o la red bloquea las conexiones directas entre equipos (aislamiento de clientes). Permite Show File Sync en el cortafuegos o usa una red sin aislamiento.".to_string())
+        Some("Se detectan otros equipos pero no se puede conectar con ellos. Probablemente un cortafuegos o la red bloquea las conexiones directas entre equipos (aislamiento de clientes). Permite Home File Sync en el cortafuegos o usa una red sin aislamiento.".to_string())
     } else if group_id.is_some() && !any_connected && !in_group_nearby && now.duration_since(inner.started) > Duration::from_secs(20) {
-        Some("No se detecta ningún otro equipo del grupo. Comprueba que están encendidos, con Show File Sync abierto y en la misma red. Algunas redes wifi aíslan a los clientes y no permiten que los equipos se vean.".to_string())
+        Some("No se detecta ningún otro equipo del grupo. Comprueba que están encendidos, con Home File Sync abierto y en la misma red. Algunas redes wifi aíslan a los clientes y no permiten que los equipos se vean.".to_string())
     } else {
         None
     };
@@ -1424,5 +1515,6 @@ fn build_snapshot(inner: &Inner) -> UiState {
         events: a.events.iter().take(30).cloned().collect(),
         open_groups,
         network_warning,
+        mode: s.mode,
     }
 }

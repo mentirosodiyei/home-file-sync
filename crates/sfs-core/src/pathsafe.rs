@@ -12,7 +12,7 @@ use std::path::{Component, Path, PathBuf};
 use unicode_normalization::UnicodeNormalization;
 
 /// Carpeta interna dentro de la carpeta sincronizada (temporales, versiones).
-pub const META_DIR: &str = ".showfilesync";
+pub const META_DIR: &str = ".homefilesync";
 
 /// Longitud máxima aceptada para una ruta del protocolo (en bytes).
 pub const MAX_PATH_BYTES: usize = 4096;
@@ -205,7 +205,7 @@ mod tests {
     fn rejects_traversal_and_absolute() {
         for bad in [
             "../x", "a/../../x", "/etc/passwd", "C:/Windows", "c:x", "a//b", "./a", "a/./b", "a\\b", "", "a/\0b",
-            ".showfilesync/tmp/x", ".ShowFileSync/x", "a/..", "x/.DS_Store",
+            ".homefilesync/tmp/x", ".HomeFileSync/x", "a/..", "x/.DS_Store",
         ] {
             assert!(validate_wire_path(bad).is_err(), "debería rechazar {bad:?}");
         }

@@ -3,7 +3,7 @@
 //!
 //! Estructura interna dentro de la carpeta sincronizada:
 //! ```text
-//! .showfilesync/
+//! .homefilesync/
 //!   tmp/<hash>.sfspart        descargas en curso (reanudables)
 //!   versiones/<fecha>/<ruta>  versiones sustituidas por una actualización
 //! ```
@@ -51,7 +51,7 @@ pub fn ensure_meta(root: &Path) -> std::io::Result<bool> {
     if !existed {
         let _ = std::fs::write(
             meta.join("LEEME.txt"),
-            "Carpeta interna de Show File Sync.\n\
+            "Carpeta interna de Home File Sync.\n\
              tmp/        descargas en curso\n\
              versiones/  copias de archivos sustituidos por versiones nuevas (se borran a los 14 días)\n\
              No la borres mientras la aplicación está en uso.\n",

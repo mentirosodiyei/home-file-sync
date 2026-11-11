@@ -1,6 +1,6 @@
 //! # sfs-core
 //!
-//! Motor de Show File Sync: sincronización de carpetas entre equipos de una
+//! Motor de Home File Sync: sincronización de carpetas entre equipos de una
 //! misma red local, sin servidores ni configuración.
 //!
 //! Ver `docs/ARQUITECTURA.md` para el diseño completo.
@@ -11,6 +11,8 @@ pub mod diag;
 pub mod discovery;
 pub mod engine;
 pub mod fsops;
+pub mod hub;
+pub mod inbox;
 pub mod index;
 pub mod netpath;
 pub mod pathsafe;

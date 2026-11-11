@@ -11,6 +11,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// Cómo participa este equipo en una carpeta compartida.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ShareMode {
+    /// En los dos sentidos: las carpetas funcionan como una sola.
+    #[default]
+    Sync,
+    /// Solo recibe lo de los demás y conserva lo que se borre en el original.
+    Backup,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Group {
     pub id: String,
@@ -21,11 +32,11 @@ pub struct Group {
 
 impl Group {
     pub fn create(device_name: &str) -> Self {
-        Group {
-            id: hex::encode(random_bytes::<12>()),
-            name: format!("Grupo de {device_name}"),
-            key: hex::encode(random_bytes::<32>()),
-        }
+        Self::create_named(&format!("Carpeta de {device_name}"))
+    }
+
+    pub fn create_named(name: &str) -> Self {
+        Group { id: hex::encode(random_bytes::<12>()), name: name.to_string(), key: hex::encode(random_bytes::<32>()) }
     }
 
     pub fn key_bytes(&self) -> [u8; 32] {
@@ -56,6 +67,8 @@ pub struct Settings {
     /// (id → "ip:puerto"). Permiten reconectar aunque el descubrimiento falle.
     #[serde(default)]
     pub peer_addrs: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    pub mode: ShareMode,
 }
 
 impl Settings {
@@ -75,6 +88,7 @@ impl Settings {
                     known: BTreeMap::new(),
                     manual_peers: Vec::new(),
                     peer_addrs: BTreeMap::new(),
+                    mode: ShareMode::Sync,
                 };
                 s.save(data_dir)?;
                 s
@@ -84,6 +98,22 @@ impl Settings {
             s.device_name = n.to_string();
         }
         Ok(s)
+    }
+
+    /// Ajustes nuevos con una identidad ya existente (varias carpetas
+    /// compartidas en un mismo equipo usan la misma identidad).
+    pub fn with_identity(private_key: &str, public_key: &str, device_name: &str) -> Self {
+        Settings {
+            private_key: private_key.into(),
+            public_key: public_key.into(),
+            device_name: device_name.into(),
+            folder: None,
+            group: None,
+            known: BTreeMap::new(),
+            manual_peers: Vec::new(),
+            peer_addrs: BTreeMap::new(),
+            mode: ShareMode::Sync,
+        }
     }
 
     pub fn save(&self, data_dir: &Path) -> std::io::Result<()> {
@@ -151,7 +181,7 @@ pub fn check_folder(path: &Path) -> Result<PathBuf, String> {
     if forbidden.iter().any(|f| rest == *f || rest.starts_with(&format!("{f}/"))) {
         return Err("No se puede sincronizar una carpeta del sistema.".into());
     }
-    let probe = canon.join(".showfilesync-probe");
+    let probe = canon.join(".homefilesync-probe");
     std::fs::write(&probe, b"ok").map_err(|e| format!("No se puede escribir en la carpeta: {e}"))?;
     let _ = std::fs::remove_file(&probe);
     Ok(canon)

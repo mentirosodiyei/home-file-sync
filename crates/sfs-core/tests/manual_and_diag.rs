@@ -119,9 +119,9 @@ async fn manual_join_reports_understandable_errors() {
         assert!(b.engine.join_group_manual(host, None, code, false).await.is_err(), "{host:?}");
     }
     // Nombre que no existe.
-    let e = b.engine.join_group_manual("no-existe-show-file-sync.invalid", None, "12345678", false).await.unwrap_err();
+    let e = b.engine.join_group_manual("no-existe-home-file-sync.invalid", None, "12345678", false).await.unwrap_err();
     assert!(e.contains("No se encuentra"), "{e}");
-    // Un servicio que no es Show File Sync en ese puerto.
+    // Un servicio que no es Home File Sync en ese puerto.
     let other = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = other.local_addr().unwrap().port();
     tokio::spawn(async move {
@@ -175,7 +175,7 @@ async fn diagnostic_log_records_phases_without_secrets() {
     let f = out.path().join("export.log");
     diag::export(&f, "prueba").unwrap();
     let exported = std::fs::read_to_string(&f).unwrap();
-    assert!(exported.starts_with("Show File Sync — registro de diagnóstico") && exported.contains("Autenticado con"));
+    assert!(exported.starts_with("Home File Sync — registro de diagnóstico") && exported.contains("Autenticado con"));
 }
 
 /// Cada unión manual deja en el registro por qué no funcionó la automática.

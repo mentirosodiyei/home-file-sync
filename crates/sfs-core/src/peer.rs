@@ -104,7 +104,7 @@ async fn open_secure(inner: &Inner, cands: &[Candidate], purpose: &str, quiet: b
                 attempts.push(a);
             }
             Err(_) => {
-                let a = later_failure(&c, &ifs, Phase::Encryption, "sin respuesta al cifrado (¿es Show File Sync?)", None);
+                let a = later_failure(&c, &ifs, Phase::Encryption, "sin respuesta al cifrado (¿es Home File Sync?)", None);
                 tracing::warn!("Fallo tras conectar: {a}");
                 attempts.push(a);
             }
@@ -405,7 +405,8 @@ pub(crate) async fn run_session(inner: Arc<Inner>, hs: Handshaken, remote: Strin
         return;
     }
     inner.event("net", format!("Conectado con {name}"));
-    if !inner.nearby.lock().unwrap().contains_key(&remote) {
+    let gid = inner.group().map(|g| g.id).unwrap_or_default();
+    if !inner.nearby.lock().unwrap().contains_key(&crate::engine::nkey(&remote, &gid)) {
         tracing::info!(
             "«{name}» conectado sin que el descubrimiento automático lo haya visto ({})",
             match observed {
@@ -421,12 +422,7 @@ pub(crate) async fn run_session(inner: Arc<Inner>, hs: Handshaken, remote: Strin
     inner.broadcast_members();
 
     // Índice completo y estado actual.
-    let entries: Vec<FileEntry> = inner
-        .folder()
-        .filter(|f| f.scanned_once.load(Ordering::SeqCst))
-        .map(|f| f.index.lock().unwrap().entries.values().map(|e| e.entry.clone()).collect())
-        .unwrap_or_default();
-    send_full_index(&ctrl_tx, entries);
+    send_full_index(&ctrl_tx, inner.announced_entries());
     let _ = ctrl_tx.send(Msg::Status(crate::engine::own_status(&inner)));
 
     let mut uploads = crate::transfer::Uploads::new(inner.clone(), handle.clone(), name.clone());

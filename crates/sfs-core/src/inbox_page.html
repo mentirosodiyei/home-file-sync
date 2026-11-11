@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enviar a {{DEVICE}}</title>
+<style>
+  :root { --bg:#f6f6f8; --card:#fff; --text:#16181d; --muted:#6b7180; --border:#e2e4ea; --accent:#2f6fed; --green:#1f9d55; --red:#d64545; color-scheme: light dark; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#15171c; --card:#1d2027; --text:#eceef3; --muted:#9198a6; --border:#2e333d; --accent:#4d86ff; --green:#39c172; --red:#f07070; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width:520px; margin:0 auto; padding:24px 16px 40px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  p { color:var(--muted); margin:0 0 18px; }
+  .drop { display:block; border:2px dashed var(--border); border-radius:16px; background:var(--card); padding:36px 16px; text-align:center; cursor:pointer; }
+  .drop.over { border-color:var(--accent); }
+  .drop b { display:block; font-size:18px; margin-bottom:6px; color:var(--accent); }
+  input[type=file] { display:none; }
+  ul { list-style:none; padding:0; margin:18px 0 0; }
+  li { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:10px 12px; margin-bottom:8px; }
+  .row { display:flex; gap:8px; justify-content:space-between; }
+  .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
+  .st { color:var(--muted); font-size:13px; white-space:nowrap; }
+  .ok .st { color:var(--green); } .err .st { color:var(--red); }
+  .bar { height:4px; background:var(--border); border-radius:2px; margin-top:8px; overflow:hidden; }
+  .bar i { display:block; height:100%; width:0; background:var(--accent); transition:width .2s; }
+  footer { margin-top:24px; font-size:12px; color:var(--muted); text-align:center; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Enviar archivos a «{{DEVICE}}»</h1>
+  <p>Se guardarán en <b>{{DEST}}</b>. No hace falta instalar nada.</p>
+  <label class="drop" id="drop">
+    <b>Elegir archivos</b>
+    <span>o arrastrarlos aquí</span>
+    <input type="file" id="files" multiple>
+  </label>
+  <ul id="list"></ul>
+  <footer>Home File Sync · solo dentro de la misma red</footer>
+</main>
+<script>
+"use strict";
+const list = document.getElementById("list");
+const input = document.getElementById("files");
+const drop = document.getElementById("drop");
+const queue = [];
+let busy = false;
+
+function fmt(n) { const u = ["B","KB","MB","GB"]; let i = 0; while (n >= 1000 && i < 3) { n /= 1000; i++; } return (i ? n.toFixed(1) : n) + " " + u[i]; }
+
+function add(files) {
+  for (const f of files) {
+    const li = document.createElement("li");
+    li.innerHTML = '<div class="row"><span class="name"></span><span class="st">En espera</span></div><div class="bar"><i></i></div>';
+    li.querySelector(".name").textContent = f.name;
+    list.appendChild(li);
+    queue.push({ f, li });
+  }
+  next();
+}
+
+function next() {
+  if (busy || !queue.length) return;
+  busy = true;
+  const { f, li } = queue.shift();
+  const st = li.querySelector(".st"), bar = li.querySelector(".bar i");
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", location.pathname.replace(/\/$/, "") + "/upload?name=" + encodeURIComponent(f.name));
+  xhr.upload.onprogress = (e) => { if (e.lengthComputable) { const p = Math.floor(e.loaded / e.total * 100); bar.style.width = p + "%"; st.textContent = p + " % · " + fmt(e.loaded); } };
+  xhr.onload = () => {
+    let r = {}; try { r = JSON.parse(xhr.responseText); } catch (_) {}
+    if (xhr.status === 200 && r.ok) { li.className = "ok"; bar.style.width = "100%"; st.textContent = "Enviado ✓"; if (r.name !== f.name) st.textContent += " como «" + r.name + "»"; }
+    else { li.className = "err"; st.textContent = r.error || ("Error " + xhr.status); }
+    busy = false; next();
+  };
+  xhr.onerror = () => { li.className = "err"; st.textContent = "Sin conexión con el equipo"; busy = false; next(); };
+  st.textContent = "Enviando…";
+  xhr.send(f);
+}
+
+input.addEventListener("change", () => { add(input.files); input.value = ""; });
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); add(e.dataTransfer.files); });
+</script>
+</body>
+</html>

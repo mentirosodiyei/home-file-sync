@@ -1,26 +1,22 @@
-# Show File Sync
+# Home File Sync
 
-**Sincroniza una carpeta entre varios ordenadores Windows y macOS de la misma red local.**
-Sin servidores, sin cuentas, sin direcciones IP y sin carpetas compartidas.
-
-Está pensado para técnicos audiovisuales en eventos, congresos y espectáculos.
-Dejas una presentación en la carpeta de un portátil y aparece en todos los demás.
-
-```
-Instalar → Abrir → Elegir carpeta → Crear grupo o escribir el código → Listo
-```
+**Carpetas compartidas entre los ordenadores de casa (Windows y macOS), en tu propia red.**
+Sin nube, sin cuentas, sin direcciones IP.
 
 ## Cómo se usa
 
-1. Instala Show File Sync en todos los ordenadores y ábrelo.
-2. En cada uno, **elige la carpeta** que quieres sincronizar. Cada equipo usa su propia carpeta local.
-3. En el primer equipo pulsa **Crear grupo nuevo**. Aparece un código de 8 cifras, por ejemplo `4821 0937`.
-4. En los demás, escribe ese código en **Unirse a un grupo**.
-5. Arrastra un PowerPoint, Keynote, PDF o vídeo a cualquiera de las carpetas. Aparecerá en las demás.
+- **Crear una carpeta compartida:** pulsa **Nueva carpeta compartida**, ponle un nombre, elige la carpeta de tu equipo y si la quieres *sincronizada* o como *copia de seguridad*. Aparece un código de 8 cifras.
+- **Unirse desde otro equipo:** pulsa **Unirme con código**. La carpeta aparece en la lista porque se descubre en la red. Escribe el código y elige dónde guardarla.
+- **Tantas carpetas como quieras, cada una con sus miembros.** En una familia de cuatro, la pareja puede tener una carpeta compartida, el padre otra con su hijo, y el ordenador del salón una copia de seguridad de las fotos. Cada carpeta tiene su propio código y nadie ve las carpetas de los demás.
+- **Dos modos por carpeta, elegidos en cada equipo:**
+  - **Sincronizada:** lo que se añade, edita, renombra o borra en un equipo se replica en todos. Es como una sola carpeta.
+  - **Copia de seguridad:** el equipo solo recibe. Sus cambios no se envían, y lo que se borra en los demás se conserva en la copia.
+- **Nombres de los equipos a tu gusto:** pulsa sobre el nombre de cualquier equipo para llamarlo como quieras («Ana», «PC del salón»…). Ese nombre solo lo ves tú; no cambia el de nadie más.
+- **Recibir desde el móvil, sin instalar nada:** pulsa **📱 Recibir del móvil**. Escanea el código QR con la cámara del teléfono, o abre la dirección en cualquier navegador de la misma wifi, y elige las fotos o archivos.
+  - Se guardan en la carpeta compartida que elijas, o en *Descargas/Recibidos Home File Sync*.
+  - El enlace caduca a los 15 minutos y deja de valer al cerrarlo.
 
-Para añadir más adelante otro portátil, pulsa **Añadir equipo** en cualquier equipo del grupo y escribe el código nuevo. El portátil recibe todo lo que le falte.
-
-Al cerrar la ventana, Show File Sync sigue funcionando en la **bandeja del sistema** (Windows) o en la **barra de menús** (macOS). Para detenerlo, elige *Salir* en ese menú.
+Al cerrar la ventana, Home File Sync sigue funcionando en la **bandeja del sistema** (Windows) o en la **barra de menús** (macOS). Para detenerlo, elige *Salir* en ese menú.
 
 ## Qué garantiza
 
@@ -29,13 +25,13 @@ Al cerrar la ventana, Show File Sync sigue funcionando en la **bandeja del siste
   - Si dos equipos cambian el mismo archivo a la vez, se queda la versión más reciente y la otra va a `old/` como `Nombre (conflicto - Equipo - abc123).pptx`.
   - Lo que hay en `old` no se borra solo: puedes vaciarla cuando quieras, y eso también se replica.
 - **Las carpetas funcionan como una sola.** Lo que se añade, edita, renombra o borra en un equipo se replica en todos.
-  - Un archivo borrado no se destruye en los demás equipos: se mueve a su carpeta oculta `.showfilesync/papelera` y se conserva 14 días, por si se borró por error.
+  - Un archivo borrado no se destruye en los demás equipos: se mueve a su carpeta oculta `.homefilesync/papelera` y se conserva 14 días, por si se borró por error.
   - Si un equipo edita un archivo mientras otro lo borra, gana la edición.
   - Si un disco se desconecta, o la carpeta se sustituye por otra vacía, no se borra nada en los demás: la carpeta se vuelve a llenar.
 - **Nada a medias.**
   - No se copian archivos que todavía se están escribiendo.
   - Las descargas van a un temporal y solo se colocan, con un renombrado atómico, cuando el hash BLAKE3 coincide.
-- **Reanudación.** Si se desconecta un cable a mitad de un vídeo de 4 GB, la descarga continúa donde se quedó al volver la red.
+- **Reanudación.** Si se corta la red a mitad de un vídeo de 4 GB, la descarga continúa donde se quedó al volver.
 - **Sin transferencias inútiles.** Los archivos idénticos no se vuelven a enviar, y con muchos equipos la carga se reparte entre ellos.
 - **Seguridad.**
   - Solo los equipos emparejados con el código pueden intercambiar archivos, y todo viaja cifrado.
@@ -52,20 +48,20 @@ En **macOS** hay que permitir el acceso a la **Red local** cuando el sistema lo 
 
 Si el grupo no aparece automáticamente, usa **Conexión manual** en «Unirse a un grupo», escribiendo la IP del otro equipo. Para cualquier problema, *Ajustes (⚙) → Avanzado → Diagnóstico* muestra el registro detallado de conexiones.
 
-Algunas redes wifi de hoteles y recintos tienen **aislamiento de clientes**, que impide que los equipos se vean entre sí. Show File Sync lo indica en pantalla; en ese caso usa una red de producción propia o un switch. Más detalles en [docs/RED.md](docs/RED.md).
+Algunas redes wifi de hoteles y recintos tienen **aislamiento de clientes**, que impide que los equipos se vean entre sí. Home File Sync lo indica en pantalla; en ese caso usa una red de producción propia o un switch. Más detalles en [docs/RED.md](docs/RED.md).
 
 ## Instalación
 
 | Sistema | Archivo |
 |---|---|
-| macOS 11 Big Sur o posterior (Intel y Apple Silicon) | `Show File Sync_x.y.z_universal.dmg` |
-| Windows 10 / 11 (64 bits) | `Show File Sync_x.y.z_x64-setup.exe` |
+| macOS 11 Big Sur o posterior (Intel y Apple Silicon) | `Home File Sync_x.y.z_universal.dmg` |
+| Windows 10 / 11 (64 bits) | `Home File Sync_x.y.z_x64-setup.exe` |
 
 - **macOS**:
   - La primera vez, macOS pide permiso para acceder a la **red local**: hay que aceptarlo.
   - Mientras la app no esté firmada con un certificado de Apple, ábrela con *clic derecho → Abrir*.
 - **Windows**:
-  - El instalador añade automáticamente las reglas del Firewall de Windows, incluso para redes «Públicas», que es como suelen clasificarse las redes de eventos.
+  - El instalador añade automáticamente las reglas del Firewall de Windows, incluso para redes «Públicas», por si la red de casa está marcada así.
   - Necesita WebView2, que viene incluido en Windows 10/11 actualizados; el instalador lo descarga si falta.
 
 ## Compilar desde el código
@@ -77,7 +73,7 @@ cargo test --workspace
 ```
 
 ```bash
-cargo run -p show-file-sync
+cargo run -p home-file-sync
 ```
 
 ```bash
@@ -90,7 +86,7 @@ En Windows, `npx @tauri-apps/cli@2 build` genera el instalador NSIS. La CI (`.gi
 
 ### Sin interfaz gráfica
 
-`showfilesync-cli` ejecuta el mismo motor sin ventana. Sirve para diagnóstico o para probar varias instancias en un mismo ordenador:
+`homefilesync-cli` ejecuta el mismo motor sin ventana. Sirve para diagnóstico o para probar varias instancias en un mismo ordenador:
 
 ```bash
 cargo run -p sfs-cli -- --data /tmp/a --folder ~/Escenario crear

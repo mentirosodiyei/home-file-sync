@@ -35,7 +35,7 @@ pub struct ScanOutcome {
     /// Marcas de borrado nuevas: se anuncian para que nadie pida el archivo a
     /// este equipo (los demás nunca borran por ello).
     pub tombstones: Vec<FileEntry>,
-    /// La carpeta interna `.showfilesync` ha desaparecido: la carpeta se ha
+    /// La carpeta interna `.homefilesync` ha desaparecido: la carpeta se ha
     /// sustituido o el disco se ha desmontado dejando el punto de montaje
     /// vacío. No se interpreta como borrado de los archivos.
     pub meta_missing: bool,

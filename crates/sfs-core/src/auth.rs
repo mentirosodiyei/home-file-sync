@@ -83,8 +83,8 @@ pub struct PairState(Spake2<Ed25519Group>);
 
 fn spake(code: &str, joiner: bool) -> (PairState, Vec<u8>) {
     let pw = Password::new(code.as_bytes());
-    let a = Identity::new(b"showfilesync-joiner");
-    let b = Identity::new(b"showfilesync-member");
+    let a = Identity::new(b"homefilesync-joiner");
+    let b = Identity::new(b"homefilesync-member");
     let (s, msg) = if joiner { Spake2::<Ed25519Group>::start_a(&pw, &a, &b) } else { Spake2::<Ed25519Group>::start_b(&pw, &a, &b) };
     (PairState(s), msg)
 }
@@ -103,7 +103,7 @@ impl PairState {
     /// Clave compartida (idéntica en ambos lados solo si el código coincide).
     pub fn finish(self, other: &[u8]) -> Option<[u8; 32]> {
         let k = self.0.finish(other).ok()?;
-        Some(blake3::derive_key("showfilesync pairing key v1", &k))
+        Some(blake3::derive_key("homefilesync pairing key v1", &k))
     }
 }
 

@@ -1,4 +1,4 @@
-# Arquitectura de Show File Sync
+# Arquitectura de Home File Sync
 
 Este documento explica las decisiones de diseño y cómo funciona cada parte.
 El orden de prioridades que guía todo es:
@@ -38,7 +38,7 @@ transferencia por bloques con verificación por hash.
 │  Engine ── Scanner (hilo) ── Carpeta ││  Noise   │  Engine ── Carpeta       │
 │     │  └─ Índice (JSON)              │├─────────►│     │                    │
 │     ├─ Descubrimiento (mDNS+baliza)  ││  TCP     │     ├─ ...               │
-│     ├─ Planificador de descargas     ││ 47800    │                          │
+│     ├─ Planificador de descargas     ││ 47820    │                          │
 │     └─ Conexiones (una por equipo)   ││          │                          │
 └──────────────────────────────────────┘          └──────────────────────────┘
 ```
@@ -60,10 +60,33 @@ transferencia por bloques con verificación por hash.
 | `fsops` | Temporales, `rename` atómico, versiones anteriores y limpieza. |
 | `engine` | Orquesta todo y genera el estado para la interfaz. |
 
+## 2 bis. Varias carpetas compartidas (hub)
+
+- Cada carpeta compartida es un grupo independiente, con su clave, sus miembros y su código, y la gestiona un `Engine` propio con su puerto TCP (47820 y siguientes libres).
+- El `Hub` (`hub.rs`) coordina todo:
+  - mantiene una **identidad única** del equipo (`hub.json`), compartida por todos sus motores;
+  - ejecuta **un solo descubrimiento**, que anuncia una instancia mDNS (y una baliza) por carpeta, y reparte lo que ve entre los motores;
+  - guarda los **alias** locales de otros equipos;
+  - lista las invitaciones abiertas;
+  - gestiona la recepción por navegador.
+- Datos en disco: `hub.json` y `shares/<id>/` con los ajustes y el índice de cada carpeta.
+- **Modo copia de seguridad** (por carpeta y equipo):
+  - el motor anuncia un índice vacío, así que nadie le pide archivos ni recibe sus cambios;
+  - ignora los borrados remotos;
+  - sí aplica altas y ediciones, y la versión anterior va a `old/`.
+- **Recepción por navegador** (`inbox.rs`):
+  - servidor HTTP mínimo en el puerto 47830;
+  - una sola sesión con un token aleatorio de 128 bits que caduca a los 15 minutos;
+  - página web propia para elegir archivos;
+  - subida con `Content-Length` a un temporal y colocación atómica sin sobrescribir;
+  - nombres limpiados: sin rutas, ni caracteres no válidos, ni nombres reservados.
+
+  Es HTTP sin cifrar dentro de la red local, porque los navegadores no aceptan sin avisos un certificado propio; está pensado para la red de casa.
+
 ## 3. Descubrimiento
 
-- **mDNS/DNS-SD**: servicio `_showfilesync._tcp`, implementado en Rust puro con `mdns-sd`. Los registros TXT incluyen el id del equipo, su nombre, el id y nombre del grupo, si está mostrando un código y la versión del protocolo.
-- **Baliza UDP**: cada 3 s se envía un JSON con lo mismo por broadcast al puerto 47801, tanto a `255.255.255.255` como a la dirección de broadcast de cada interfaz. Sirve de respaldo cuando mDNS falla, por ejemplo con conflictos con otros respondedores mDNS en Windows o con switches que filtran multicast.
+- **mDNS/DNS-SD**: servicio `_homefilesync._tcp`, implementado en Rust puro con `mdns-sd`. Los registros TXT incluyen el id del equipo, su nombre, el id y nombre del grupo, si está mostrando un código y la versión del protocolo.
+- **Baliza UDP**: cada 3 s se envía un JSON con lo mismo por broadcast al puerto 47821, tanto a `255.255.255.255` como a la dirección de broadcast de cada interfaz. Sirve de respaldo cuando mDNS falla, por ejemplo con conflictos con otros respondedores mDNS en Windows o con switches que filtran multicast.
 - Lo anunciado **no es secreto ni sirve para autenticar**: solo indica a quién conectar.
 - Si dos equipos del grupo se ven, conecta primero el de id menor. El otro conecta también si a los 6 s no hay conexión, por si un cortafuegos solo deja pasar en un sentido. Si llegan a abrirse dos conexiones, ambos lados conservan la iniciada por el id menor.
 - **Elección de dirección** (`netpath`). Un equipo puede anunciar varias direcciones: Ethernet, wifi, VPN, adaptadores virtuales de Hyper-V/VirtualBox, IPv6.
@@ -120,12 +143,12 @@ Cada archivo tiene una entrada con estos campos: ruta (NFC, `/`), tamaño,
 
 | Situación | Acción |
 |---|---|
-| La remota es un borrado posterior a la versión local | Eliminar: el archivo se mueve a `.showfilesync/papelera/<fecha>/` (14 días). |
+| La remota es un borrado posterior a la versión local | Eliminar: el archivo se mueve a `.homefilesync/papelera/<fecha>/` (14 días). |
 | La remota es un borrado y aquí no existe | Registrar el borrado, para no recibir el archivo de un equipo con una versión antigua. |
 | La remota es un borrado concurrente con una edición local | Nada: gana la edición, que después llega al equipo que borró. |
 | No existe aquí | Descargar. |
 | Mismo hash | Fusionar vectores. No se transfiere nada. |
-| Remota posterior | Descargar. La versión local se mueve a la carpeta visible `old/` (misma subruta, fecha de esa versión en el nombre), que se sincroniza: así todos los equipos, también el que editó, tienen la versión anterior. Dentro de `old/` no se generan más versiones (la anterior va a la copia oculta `.showfilesync/versiones`). |
+| Remota posterior | Descargar. La versión local se mueve a la carpeta visible `old/` (misma subruta, fecha de esa versión en el nombre), que se sincroniza: así todos los equipos, también el que editó, tienen la versión anterior. Dentro de `old/` no se generan más versiones (la anterior va a la copia oculta `.homefilesync/versiones`). |
 | Local posterior | Nada: el otro equipo la pedirá. |
 | Independientes (concurrentes) | **Conflicto**. |
 | Borrada aquí y la remota es la versión anterior al borrado | Nada. |
@@ -151,7 +174,7 @@ Cada archivo tiene una entrada con estos campos: ruta (NFC, `/`), tamaño,
   - no cambia mientras se calcula su hash.
 - Se ignoran:
   - archivos de sistema y temporales: `.DS_Store`, `Thumbs.db`, `~$*` de Office, `.~lock.*`, `._*`, `*.tmp`, `*.part`, `*.crdownload`…;
-  - la carpeta interna `.showfilesync`;
+  - la carpeta interna `.homefilesync`;
   - los enlaces simbólicos.
 - Un borrado local es una versión más: se incrementa el contador del equipo y se anuncia a los demás.
 - Si la carpeta deja de estar disponible (disco desconectado), **no** se interpreta como borrado.
@@ -169,7 +192,7 @@ Cada archivo tiene una entrada con estos campos: ruta (NFC, `/`), tamaño,
   - Las peticiones se atienden en orden y el receptor escribe secuencialmente.
   - Los mensajes de control (índice, estado, ping) tienen prioridad sobre los de datos.
 - **Temporales y reanudación**:
-  - Las descargas van a `.showfilesync/tmp/<hash>.sfspart`, en el mismo volumen que el destino.
+  - Las descargas van a `.homefilesync/tmp/<hash>.sfspart`, en el mismo volumen que el destino.
   - Si se cae la conexión, el temporal se conserva y la descarga continúa desde ese punto, con el mismo equipo o con otro.
 - **Integridad**: al terminar se verifica el BLAKE3 completo. Si no coincide, se descarta y se descarga de nuevo.
 - **Colocación** (bajo el bloqueo del índice):

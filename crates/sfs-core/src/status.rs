@@ -35,6 +35,8 @@ pub struct DeviceView {
     pub detail: String,
     pub pending_files: u32,
     pub pending_bytes: u64,
+    /// Ese equipo tiene la carpeta como copia de seguridad.
+    pub backup: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -111,4 +113,5 @@ pub struct UiState {
     pub events: Vec<EventView>,
     pub open_groups: Vec<OpenGroupView>,
     pub network_warning: Option<String>,
+    pub mode: crate::settings::ShareMode,
 }

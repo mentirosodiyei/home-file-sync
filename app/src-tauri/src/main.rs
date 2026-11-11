@@ -1,13 +1,15 @@
-//! Aplicación de escritorio Show File Sync (Tauri 2).
+//! Aplicación de escritorio Home File Sync (Tauri 2).
 //!
-//! La ventana es solo una vista del motor (`sfs-core`). Al cerrarla, la app
-//! sigue funcionando en la bandeja del sistema (Windows) o en la barra de
-//! menús (macOS). Solo "Salir" detiene la sincronización.
+//! La ventana es solo una vista del hub (`sfs-core`), que gestiona todas las
+//! carpetas compartidas de este equipo. Al cerrarla, la app sigue funcionando
+//! en la bandeja del sistema (Windows) o en la barra de menús (macOS). Solo
+//! "Salir" detiene la sincronización.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use sfs_core::hub::{Hub, HubConfig, HubState};
+use sfs_core::settings::ShareMode;
 use sfs_core::status::Overall;
-use sfs_core::{Engine, EngineConfig, UiState};
 use std::path::PathBuf;
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -17,7 +19,22 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
 struct App {
-    engine: Engine,
+    hub: Hub,
+}
+
+fn mode(m: &str) -> ShareMode {
+    if m == "backup" {
+        ShareMode::Backup
+    } else {
+        ShareMode::Sync
+    }
+}
+
+fn path(p: &str) -> Result<PathBuf, String> {
+    if p.trim().is_empty() {
+        return Err("Elige una carpeta.".into());
+    }
+    Ok(PathBuf::from(p))
 }
 
 // ---------------------------------------------------------------------------
@@ -25,59 +42,102 @@ struct App {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-async fn get_state(app: State<'_, App>) -> Result<UiState, String> {
-    Ok(app.engine.snapshot())
+async fn get_state(app: State<'_, App>) -> Result<HubState, String> {
+    Ok(app.hub.snapshot())
 }
 
-/// Abre el selector de carpetas del sistema y, si se elige una, la activa.
+/// Abre el selector de carpetas del sistema. Devuelve la ruta elegida.
 #[tauri::command]
-async fn choose_folder(handle: AppHandle, app: State<'_, App>) -> Result<Option<String>, String> {
+async fn pick_folder(handle: AppHandle) -> Result<Option<String>, String> {
     let h = handle.clone();
-    let picked = tauri::async_runtime::spawn_blocking(move || h.dialog().file().set_title("Elige la carpeta que quieres sincronizar").blocking_pick_folder())
+    let picked = tauri::async_runtime::spawn_blocking(move || h.dialog().file().set_title("Elige la carpeta").blocking_pick_folder())
         .await
         .map_err(|e| e.to_string())?;
-    let Some(path) = picked.and_then(|p| p.into_path().ok()) else { return Ok(None) };
-    app.engine.set_folder(&path).map(|p| Some(p.display().to_string()))
+    Ok(picked.and_then(|p| p.into_path().ok()).map(|p| p.display().to_string()))
 }
 
 #[tauri::command]
-async fn create_group(app: State<'_, App>) -> Result<String, String> {
-    Ok(app.engine.create_group())
+async fn create_share(app: State<'_, App>, name: String, folder: String, share_mode: String) -> Result<String, String> {
+    let (id, _code) = app.hub.create_share(&name, &path(&folder)?, mode(&share_mode)).await?;
+    Ok(id)
 }
 
 #[tauri::command]
-async fn open_pairing(app: State<'_, App>) -> Result<String, String> {
-    app.engine.open_pairing()
+async fn join_share(app: State<'_, App>, invite: Option<String>, code: String, folder: String, share_mode: String) -> Result<String, String> {
+    app.hub.join_share(invite.as_deref(), &code, &path(&folder)?, mode(&share_mode)).await
 }
 
 #[tauri::command]
-async fn close_pairing(app: State<'_, App>) -> Result<(), String> {
-    app.engine.close_pairing();
-    Ok(())
-}
-
-#[tauri::command]
-async fn join_group(app: State<'_, App>, code: String, device_id: Option<String>) -> Result<(), String> {
-    app.engine.join_group(&code, device_id).await
-}
-
-#[tauri::command]
-async fn join_manual(app: State<'_, App>, host: String, port: Option<String>, code: String, remember: bool) -> Result<(), String> {
+async fn join_manual(app: State<'_, App>, host: String, port: Option<String>, code: String, folder: String, share_mode: String, remember: bool) -> Result<String, String> {
     let port = match port.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
         Some(p) => Some(sfs_core::netpath::parse_port(p)?),
         None => None,
     };
-    app.engine.join_group_manual(&host, port, &code, remember).await
+    app.hub.join_share_manual(&host, port, &code, &path(&folder)?, mode(&share_mode), remember).await
 }
 
 #[tauri::command]
-async fn remembered_addresses(app: State<'_, App>) -> Result<Vec<String>, String> {
-    Ok(app.engine.remembered_addresses())
+async fn leave_share(app: State<'_, App>, id: String) -> Result<(), String> {
+    app.hub.leave_share(&id).await
 }
 
 #[tauri::command]
-async fn forget_addresses(app: State<'_, App>) -> Result<(), String> {
-    app.engine.forget_addresses();
+async fn open_invite(app: State<'_, App>, id: String) -> Result<String, String> {
+    app.hub.open_invite(&id)
+}
+
+#[tauri::command]
+async fn close_invite(app: State<'_, App>, id: String) -> Result<(), String> {
+    app.hub.close_invite(&id)
+}
+
+#[tauri::command]
+async fn set_mode(app: State<'_, App>, id: String, share_mode: String) -> Result<(), String> {
+    app.hub.set_mode(&id, mode(&share_mode))
+}
+
+#[tauri::command]
+async fn rename_share(app: State<'_, App>, id: String, name: String) -> Result<(), String> {
+    app.hub.rename_share(&id, &name)
+}
+
+#[tauri::command]
+async fn change_folder(handle: AppHandle, app: State<'_, App>, id: String) -> Result<Option<String>, String> {
+    let Some(p) = pick_folder(handle).await? else { return Ok(None) };
+    app.hub.change_folder(&id, &PathBuf::from(p)).map(|p| Some(p.display().to_string()))
+}
+
+#[tauri::command]
+async fn open_folder(handle: AppHandle, app: State<'_, App>, id: String) -> Result<(), String> {
+    let folder = app.hub.folder(&id).ok_or("Esa carpeta no está disponible")?;
+    handle.opener().open_path(folder.display().to_string(), None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn ack_conflicts(app: State<'_, App>, id: String) -> Result<(), String> {
+    app.hub.ack_conflicts(&id)
+}
+
+#[tauri::command]
+async fn rename_device(app: State<'_, App>, name: String) -> Result<(), String> {
+    app.hub.set_device_name(&name);
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_alias(app: State<'_, App>, device_id: String, alias: String) -> Result<(), String> {
+    app.hub.set_alias(&device_id, &alias);
+    Ok(())
+}
+
+#[tauri::command]
+async fn start_receive(app: State<'_, App>, share: Option<String>) -> Result<sfs_core::inbox::ReceiveView, String> {
+    app.hub.start_receive(share.as_deref())
+}
+
+#[tauri::command]
+async fn stop_receive(app: State<'_, App>) -> Result<(), String> {
+    app.hub.stop_receive();
     Ok(())
 }
 
@@ -114,23 +174,27 @@ async fn set_debug_logging(on: bool) -> Result<(), String> {
 async fn export_logs(handle: AppHandle, app: State<'_, App>) -> Result<Option<String>, String> {
     let h = handle.clone();
     let picked = tauri::async_runtime::spawn_blocking(move || {
-        h.dialog().file().set_title("Exportar registro de diagnóstico").set_file_name("ShowFileSync-diagnostico.log").blocking_save_file()
+        h.dialog().file().set_title("Exportar registro de diagnóstico").set_file_name("HomeFileSync-diagnostico.log").blocking_save_file()
     })
     .await
     .map_err(|e| e.to_string())?;
     let Some(path) = picked.and_then(|p| p.into_path().ok()) else { return Ok(None) };
-    let s = app.engine.snapshot();
+    let s = app.hub.snapshot();
     let ifs: Vec<String> = sfs_core::netpath::local_interfaces().iter().map(|i| format!("{} {}/{}", i.name, i.ip, i.prefix)).collect();
+    let shares: Vec<String> = s
+        .shares
+        .iter()
+        .map(|sh| format!("{} ({:?}, {} equipo(s))", sh.state.group.as_ref().map(|g| g.name.as_str()).unwrap_or("?"), sh.state.mode, sh.state.devices.len()))
+        .collect();
     let header = format!(
-        "Versión: {}\nSistema: {} {}\nEquipo: {} (id {})\nPuerto TCP: {}\nInterfaces: {}\nGrupo: {}",
+        "Versión: {}\nSistema: {} {}\nEquipo: {} (id {})\nInterfaces: {}\nCarpetas compartidas: {}",
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH,
         s.device_name,
         &s.device_id[..8],
-        app.engine.port(),
         ifs.join(", "),
-        s.group.map(|g| g.name).unwrap_or_else(|| "ninguno".into())
+        if shares.is_empty() { "ninguna".into() } else { shares.join("; ") }
     );
     sfs_core::diag::export(&path, &header).map_err(|e| e.to_string())?;
     Ok(Some(path.display().to_string()))
@@ -140,34 +204,6 @@ async fn export_logs(handle: AppHandle, app: State<'_, App>) -> Result<Option<St
 async fn open_logs_folder(handle: AppHandle) -> Result<(), String> {
     let dir = sfs_core::diag::dir().ok_or("El registro en disco no está activo")?;
     handle.opener().open_path(dir.display().to_string(), None::<&str>).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn leave_group(app: State<'_, App>) -> Result<(), String> {
-    app.engine.leave_group();
-    Ok(())
-}
-
-#[tauri::command]
-async fn ack_conflicts(app: State<'_, App>) -> Result<(), String> {
-    app.engine.ack_conflicts();
-    Ok(())
-}
-
-#[tauri::command]
-async fn rename_device(app: State<'_, App>, name: String) -> Result<(), String> {
-    app.engine.set_device_name(&name);
-    Ok(())
-}
-
-#[tauri::command]
-async fn open_folder(handle: AppHandle, app: State<'_, App>) -> Result<(), String> {
-    open_synced_folder(&handle, &app.engine)
-}
-
-fn open_synced_folder(handle: &AppHandle, engine: &Engine) -> Result<(), String> {
-    let folder = engine.folder().ok_or("No hay carpeta seleccionada")?;
-    handle.opener().open_path(folder.display().to_string(), None::<&str>).map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -193,18 +229,20 @@ fn hide_window(app: &AppHandle) {
     let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 }
 
-fn tooltip(s: &UiState) -> String {
-    let status = match s.overall {
-        Overall::NoFolder => "Elige una carpeta".to_string(),
-        Overall::NoGroup => "Sin grupo".to_string(),
-        Overall::Alone => "Esperando a otros equipos".to_string(),
-        Overall::Synced => "Sincronizado".to_string(),
-        Overall::Syncing => format!("Sincronizando · faltan {}", s.pending_files),
-        Overall::Conflict => "Conflicto resuelto (ambas copias conservadas)".to_string(),
-        Overall::Error => "Hay errores".to_string(),
+fn tooltip(s: &HubState) -> String {
+    if s.shares.is_empty() {
+        return "Home File Sync — sin carpetas compartidas".into();
+    }
+    let syncing: u32 = s.shares.iter().map(|x| x.state.pending_files).sum();
+    let errors = s.shares.iter().any(|x| x.state.overall == Overall::Error);
+    let status = if errors {
+        "hay errores".to_string()
+    } else if syncing > 0 {
+        format!("sincronizando · faltan {syncing}")
+    } else {
+        "todo al día".to_string()
     };
-    let online = s.devices.iter().filter(|d| !matches!(d.state, sfs_core::status::DeviceState::Offline)).count();
-    format!("Show File Sync — {status} · {online} equipo(s)")
+    format!("Home File Sync — {} carpeta(s) · {status}", s.shares.len())
 }
 
 /// Icono de la bandeja dibujado en código: dos flechas en círculo.
@@ -242,7 +280,7 @@ fn tray_icon() -> tauri::image::Image<'static> {
 }
 
 fn data_dir(app: &AppHandle) -> PathBuf {
-    app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir().join("ShowFileSync"))
+    app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir().join("HomeFileSync"))
 }
 
 fn main() {
@@ -263,31 +301,25 @@ fn main() {
             if let Err(e) = sfs_core::diag::init_file(&data_dir(&handle).join("logs")) {
                 eprintln!("No se pudo abrir el registro de diagnóstico: {e}");
             }
-            tracing::info!("Show File Sync {} iniciado ({} {})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);
-            let cfg = EngineConfig::new(data_dir(&handle));
-            let engine = tauri::async_runtime::block_on(Engine::start(cfg))?;
-            app.manage(App { engine: engine.clone() });
+            tracing::info!("Home File Sync {} iniciado ({} {})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);
+            let cfg = HubConfig::new(data_dir(&handle));
+            let hub = tauri::async_runtime::block_on(Hub::start(cfg))?;
+            app.manage(App { hub: hub.clone() });
 
-            let open = MenuItem::with_id(app, "open", "Abrir Show File Sync", true, None::<&str>)?;
-            let folder = MenuItem::with_id(app, "folder", "Abrir carpeta sincronizada", true, None::<&str>)?;
+            let open = MenuItem::with_id(app, "open", "Abrir Home File Sync", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Salir (detiene la sincronización)", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &folder, &PredefinedMenuItem::separator(app)?, &quit])?;
+            let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
             let tray = TrayIconBuilder::with_id("main")
                 .icon(tray_icon())
                 .icon_as_template(true)
-                .tooltip("Show File Sync")
+                .tooltip("Home File Sync")
                 .menu(&menu)
                 .show_menu_on_left_click(cfg!(target_os = "macos"))
                 .on_menu_event(|app, ev| match ev.id().as_ref() {
                     "open" => show_window(app),
-                    "folder" => {
-                        if let Some(s) = app.try_state::<App>() {
-                            let _ = open_synced_folder(app, &s.engine);
-                        }
-                    }
                     "quit" => {
                         if let Some(s) = app.try_state::<App>() {
-                            tauri::async_runtime::block_on(s.engine.shutdown());
+                            tauri::async_runtime::block_on(s.hub.shutdown());
                         }
                         app.exit(0);
                     }
@@ -305,7 +337,7 @@ fn main() {
             // Mantiene el texto de la bandeja al día.
             tauri::async_runtime::spawn(async move {
                 loop {
-                    let _ = tray.set_tooltip(Some(tooltip(&engine.snapshot())));
+                    let _ = tray.set_tooltip(Some(tooltip(&hub.snapshot())));
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
             });
@@ -320,26 +352,30 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_state,
-            choose_folder,
-            create_group,
-            open_pairing,
-            close_pairing,
-            join_group,
-            leave_group,
+            pick_folder,
+            create_share,
+            join_share,
             join_manual,
-            remembered_addresses,
-            forget_addresses,
+            leave_share,
+            open_invite,
+            close_invite,
+            set_mode,
+            rename_share,
+            change_folder,
+            open_folder,
+            ack_conflicts,
+            rename_device,
+            set_alias,
+            start_receive,
+            stop_receive,
             get_logs,
             logs_text,
             set_debug_logging,
             export_logs,
-            open_logs_folder,
-            ack_conflicts,
-            rename_device,
-            open_folder
+            open_logs_folder
         ])
         .build(tauri::generate_context!())
-        .expect("error al iniciar Show File Sync")
+        .expect("error al iniciar Home File Sync")
         .run(|app, event| {
             // macOS: clic en el icono del Dock con la ventana oculta.
             #[cfg(target_os = "macos")]

@@ -3,7 +3,7 @@
 //! Recoge los mensajes de `tracing` del propio programa (descubrimiento,
 //! conexiones, emparejamiento, sincronización) y los guarda:
 //! * en memoria, los últimos [`RING_CAPACITY`] para el visor de la interfaz;
-//! * en disco, en `logs/showfilesync.log` con rotación automática
+//! * en disco, en `logs/homefilesync.log` con rotación automática
 //!   ([`MAX_FILE_BYTES`] por archivo, [`MAX_FILES`] archivos como máximo).
 //!
 //! Niveles ERROR, WARN e INFO siempre; DEBUG solo si se activa el registro
@@ -27,8 +27,8 @@ use tracing_subscriber::layer::{Context, Layer};
 pub const RING_CAPACITY: usize = 3000;
 pub const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 pub const MAX_FILES: usize = 5;
-const FILE_NAME: &str = "showfilesync.log";
-const OWN_TARGETS: &[&str] = &["sfs_core", "show_file_sync", "sfs_cli", "showfilesync"];
+const FILE_NAME: &str = "homefilesync.log";
+const OWN_TARGETS: &[&str] = &["sfs_core", "home_file_sync", "sfs_cli", "homefilesync"];
 const SENSITIVE_FIELDS: &[&str] = &[
     "code", "codigo", "key", "secret", "password", "token", "proof", "spake",
 ];
@@ -219,7 +219,7 @@ pub fn as_text(entries: &[LogEntry]) -> String {
 pub fn export(dest: &Path, header: &str) -> std::io::Result<()> {
     let log = global();
     let mut out = File::create(dest)?;
-    writeln!(out, "Show File Sync — registro de diagnóstico\n{header}\n")?;
+    writeln!(out, "Home File Sync — registro de diagnóstico\n{header}\n")?;
     let files = log
         .file
         .lock()

@@ -3,10 +3,10 @@
 <plist version="1.0">
 <dict>
   <key>NSLocalNetworkUsageDescription</key>
-  <string>Show File Sync necesita acceder a la red local para encontrar los otros equipos del grupo y sincronizar archivos con ellos.</string>
+  <string>Home File Sync necesita acceder a la red local para encontrar los otros equipos del grupo y sincronizar archivos con ellos.</string>
   <key>NSBonjourServices</key>
   <array>
-    <string>_showfilesync._tcp</string>
+    <string>_homefilesync._tcp</string>
   </array>
 </dict>
 </plist>

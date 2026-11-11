@@ -8,7 +8,7 @@
 //! la carga se reparte en lugar de saturar al equipo de origen.
 //!
 //! **Descarga**: por bloques con varias peticiones en vuelo, a un temporal
-//! `.showfilesync/tmp/<hash>.sfspart`. Si la conexión se corta, el temporal se
+//! `.homefilesync/tmp/<hash>.sfspart`. Si la conexión se corta, el temporal se
 //! conserva y la descarga continúa donde se quedó (con ese u otro equipo).
 //! Al terminar se verifica el hash BLAKE3 completo; si no coincide, se
 //! descarta y se vuelve a pedir. Solo entonces se coloca con un `rename`.
@@ -323,6 +323,8 @@ pub(crate) async fn scheduler_loop(inner: Arc<Inner>) {
         // (archivo renombrado o movido), se espera a que se copie en local.
         let wanted: std::collections::HashSet<String> = needs.iter().map(|n| n.remote.hash.clone()).collect();
         let mut done = Vec::new();
+        // En copia de seguridad se conserva lo que se borra en el original.
+        let deletes = if inner.backup() { Vec::new() } else { deletes };
         for d in deletes {
             let local_hash = folder.index.lock().unwrap().get(&d.key).map(|l| l.entry.hash.clone());
             if local_hash.is_some_and(|h| wanted.contains(&h)) {

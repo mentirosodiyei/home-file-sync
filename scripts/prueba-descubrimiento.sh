@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo build -q -p sfs-cli
-BIN="$PWD/target/debug/showfilesync-cli"
+BIN="$PWD/target/debug/homefilesync-cli"
 T="$(mktemp -d)"
 trap 'kill $(jobs -p) 2>/dev/null || true; rm -rf "$T"' EXIT
 mkdir -p "$T"/{da,db,fa,fb}

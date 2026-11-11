@@ -3,17 +3,17 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Show File Sync</title>
+  <title>Home File Sync</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header class="top">
     <div class="brand">
-      <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 0 1-13.7 5.6M4 12a8 8 0 0 1 13.7-5.6" /><path d="M18 3v4h-4M6 21v-4h4" /></svg>
-      <span>SHOW FILE SYNC</span>
+      <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5" /><path d="M5.5 9.8V20h13V9.8" /><path d="M9.5 15.5a2.8 2.8 0 0 1 4.8-1.6M14.5 14.5a2.8 2.8 0 0 1-4.8 1.6" /></svg>
+      <span>HOME FILE SYNC</span>
     </div>
     <div class="top-right">
-      <div id="overall" class="pill" hidden></div>
+      <button class="me-name link" data-action="rename-me" title="Cambiar el nombre de este equipo"><span class="dot synced"></span><span data-bind="deviceName"></span></button>
       <button class="icon gear" data-action="settings" aria-label="Ajustes" title="Ajustes">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
       </button>
@@ -21,109 +21,81 @@
   </header>
 
   <main>
-    <!-- Paso 1: carpeta -->
-    <section id="screen-folder" class="screen" hidden>
-      <div class="hero">
-        <h1>Elige la carpeta que quieres sincronizar</h1>
-        <p>Todo lo que pongas en ella aparecerá en los demás equipos del grupo. Cada equipo usa su propia carpeta local.</p>
-        <button class="primary big" data-action="choose-folder">Elegir carpeta…</button>
-        <p class="error" id="folder-error" hidden></p>
-      </div>
+    <div class="actions">
+      <button class="primary" data-action="new-share">＋ Nueva carpeta compartida</button>
+      <button class="secondary" data-action="join">Unirme con código</button>
+      <button class="secondary" data-action="receive">📱 Recibir del móvil</button>
+    </div>
+
+    <div class="banner invite" id="invites" hidden></div>
+    <div class="banner warn" id="net-warning" hidden></div>
+
+    <section id="empty" class="hero" hidden>
+      <h1>Comparte carpetas entre los ordenadores de casa</h1>
+      <p>Crea una carpeta compartida y únete a ella desde los otros equipos con un código. Cada carpeta tiene sus propios miembros: puedes tener una con tu pareja, otra con tus hijos y una copia de seguridad en el ordenador del salón.</p>
     </section>
 
-    <!-- Paso 2: grupo -->
-    <section id="screen-group" class="screen" hidden>
-      <div class="folder-line"><span class="label">Carpeta</span><code class="path" data-bind="folder"></code><button class="link" data-action="choose-folder">Cambiar</button></div>
-      <div class="cards">
-        <div class="card">
-          <h2>¿Es el primer equipo?</h2>
-          <p>Crea un grupo. Verás un código para introducir en los demás equipos.</p>
-          <button class="primary" data-action="create-group">Crear grupo nuevo</button>
-        </div>
-        <div class="card">
-          <h2>Unirse a un grupo</h2>
-          <p>Escribe el código que muestra uno de los equipos del grupo.</p>
-          <div id="open-groups"></div>
-          <form id="join-form" autocomplete="off">
-            <details class="manual" id="manual">
-              <summary>Conexión manual</summary>
-              <p class="muted small">Úsala si el grupo no aparece automáticamente. Escribe la dirección del equipo que muestra el código.</p>
-              <div class="manual-grid">
-                <label>Dirección IP o nombre del equipo
-                  <input id="m-host" placeholder="192.168.1.66 o PORTATIL-SALON" spellcheck="false" autocapitalize="off" />
-                </label>
-                <label>Puerto
-                  <input id="m-port" inputmode="numeric" placeholder="47800" maxlength="5" />
-                </label>
-              </div>
-              <label class="check"><input type="checkbox" id="m-remember" /> Recordar esta dirección para reconectar</label>
-            </details>
-            <div class="join-row">
-              <input id="code" class="code-input" inputmode="numeric" placeholder="0000 0000" maxlength="9" aria-label="Código de 8 cifras" />
-              <button class="primary" type="submit" id="join-btn">Unirse</button>
-            </div>
-          </form>
-          <div class="error" id="join-error" hidden></div>
-        </div>
-      </div>
-      <p class="hint" data-bind="networkWarning" hidden></p>
-    </section>
-
-    <!-- Pantalla principal -->
-    <section id="screen-main" class="screen" hidden>
-      <div class="banner warn" id="net-warning" hidden></div>
-      <div class="banner error" id="folder-banner" hidden></div>
-
-      <div class="folder-line">
-        <span class="label">Carpeta sincronizada</span>
-        <code class="path" data-bind="folder"></code>
-        <span class="actions"><button class="link" data-action="open-folder">Abrir</button><button class="link" data-action="choose-folder">Cambiar</button></span>
-      </div>
-
-      <div class="pairing" id="pairing" hidden>
-        <div>
-          <div class="label">Código para añadir equipos</div>
-          <div class="code" id="pair-code"></div>
-          <div class="muted" id="pair-expiry"></div>
-        </div>
-        <button class="link" data-action="close-pairing">Cerrar</button>
-      </div>
-
-      <h3>Equipos <span class="count" id="dev-count"></span></h3>
-      <ul class="devices" id="devices"></ul>
-      <p class="empty" id="no-devices" hidden>Todavía no hay otros equipos. Pulsa «Añadir equipo» y escribe el código en el otro ordenador.</p>
-
-      <h3>Actividad</h3>
-      <div class="summary" id="summary"></div>
-      <ul class="transfers" id="transfers"></ul>
-
-      <div class="banner conflict" id="conflicts" hidden>
-        <span id="conflict-text"></span>
-        <button class="link" data-action="ack-conflicts">Entendido</button>
-      </div>
-      <ul class="errors" id="errors"></ul>
-
-      <details class="history">
-        <summary>Historial</summary>
-        <ul id="events"></ul>
-      </details>
-    </section>
+    <div id="shares"></div>
   </main>
 
-  <footer class="bottom" id="footer" hidden>
-    <span class="me"><span class="dot synced"></span><span data-bind="deviceName"></span></span>
-    <span class="group muted" data-bind="groupName"></span>
-    <span class="spacer"></span>
-    <button class="secondary" data-action="add-device">Añadir equipo</button>
-    <div class="menu">
-      <button class="icon" id="menu-btn" aria-label="Más opciones">⋯</button>
-      <div class="menu-pop" id="menu" hidden>
-        <button data-action="settings">Ajustes y diagnóstico</button>
-        <button data-action="rename">Cambiar nombre de este equipo</button>
-        <button data-action="leave" class="danger">Salir del grupo</button>
+  <!-- Nueva carpeta compartida -->
+  <div class="sheet" id="sheet-new" hidden>
+    <div class="sheet-head"><h2>Nueva carpeta compartida</h2><button class="link" data-close>Cancelar</button></div>
+    <form class="tab form" id="form-new" autocomplete="off">
+      <label>Nombre (lo verán los demás al unirse)<input id="new-name" placeholder="Fotos de la familia" maxlength="60" /></label>
+      <div class="field"><span class="label">Carpeta de este equipo</span><div class="pick"><code id="new-folder">Sin elegir</code><button type="button" class="secondary" data-pick="new-folder">Elegir…</button></div></div>
+      <fieldset class="modes">
+        <label class="mode"><input type="radio" name="new-mode" value="sync" checked /><b>Sincronizada</b><span>Lo que cambie en cualquier equipo se replica en todos: es como una sola carpeta.</span></label>
+        <label class="mode"><input type="radio" name="new-mode" value="backup" /><b>Copia de seguridad</b><span>Este equipo solo recibe. Lo que se borre en los demás se conserva aquí.</span></label>
+      </fieldset>
+      <div class="error" id="new-error" hidden></div>
+      <div class="form-actions"><button class="primary" type="submit">Crear y mostrar código</button></div>
+    </form>
+  </div>
+
+  <!-- Unirse -->
+  <div class="sheet" id="sheet-join" hidden>
+    <div class="sheet-head"><h2>Unirme a una carpeta compartida</h2><button class="link" data-close>Cancelar</button></div>
+    <form class="tab form" id="form-join" autocomplete="off">
+      <div class="field"><span class="label">Carpetas esperando equipos en tu red</span><div id="join-invites"></div></div>
+      <label>Código que muestra el otro equipo<input id="join-code" class="code-input" inputmode="numeric" placeholder="0000 0000" maxlength="9" /></label>
+      <div class="field"><span class="label">Dónde guardarla en este equipo</span><div class="pick"><code id="join-folder">Sin elegir</code><button type="button" class="secondary" data-pick="join-folder">Elegir…</button></div></div>
+      <fieldset class="modes">
+        <label class="mode"><input type="radio" name="join-mode" value="sync" checked /><b>Sincronizada</b><span>Como una sola carpeta en todos los equipos.</span></label>
+        <label class="mode"><input type="radio" name="join-mode" value="backup" /><b>Copia de seguridad</b><span>Solo recibir; conservar lo que se borre en los demás.</span></label>
+      </fieldset>
+      <details class="manual" id="manual">
+        <summary>Conexión manual</summary>
+        <p class="muted small">Solo si la carpeta no aparece arriba: escribe la dirección del equipo que muestra el código.</p>
+        <div class="manual-grid">
+          <label>Dirección IP o nombre<input id="m-host" placeholder="192.168.1.20 o Portatil-Ana" spellcheck="false" autocapitalize="off" /></label>
+          <label>Puerto<input id="m-port" inputmode="numeric" placeholder="47820" maxlength="5" /></label>
+        </div>
+        <label class="check"><input type="checkbox" id="m-remember" /> Recordar esta dirección</label>
+      </details>
+      <div class="error" id="join-error" hidden></div>
+      <div class="form-actions"><button class="primary" type="submit" id="join-btn">Unirme</button></div>
+    </form>
+  </div>
+
+  <!-- Recibir del móvil -->
+  <div class="sheet" id="sheet-receive" hidden>
+    <div class="sheet-head"><h2>Recibir archivos</h2><button class="link" data-action="stop-receive">Cerrar</button></div>
+    <section class="tab receive">
+      <label>Guardar en<select id="rx-dest"></select></label>
+      <div class="qr-wrap">
+        <div class="qr" id="rx-qr"></div>
+        <div class="rx-text">
+          <p><b>Escanea el código con la cámara del móvil</b> o abre esta dirección en cualquier navegador de la misma red. No hace falta instalar nada.</p>
+          <code id="rx-url" class="selectable"></code>
+          <p class="muted small" id="rx-other"></p>
+          <p class="muted small" id="rx-expiry"></p>
+        </div>
       </div>
-    </div>
-  </footer>
+      <h3>Recibido</h3>
+      <ul class="received" id="rx-list"><li class="muted">Todavía nada</li></ul>
+    </section>
+  </div>
 
   <!-- Ajustes -->
   <div class="sheet" id="settings" hidden>
@@ -135,16 +107,13 @@
       </div>
       <button class="link" data-action="close-settings">Cerrar</button>
     </div>
-
     <section class="tab" id="tab-general">
-      <div class="row-item"><div><b>Nombre de este equipo</b><div class="muted small" data-bind="deviceName"></div></div><button class="secondary" data-action="rename">Cambiar</button></div>
-      <div class="row-item"><div><b>Direcciones manuales guardadas</b><div class="muted small" id="remembered">Ninguna</div></div><button class="secondary" data-action="forget" id="forget-btn" hidden>Olvidar</button></div>
-      <div class="row-item" id="leave-row"><div><b>Grupo</b><div class="muted small" data-bind="groupName"></div></div><button class="secondary danger-text" data-action="leave">Salir del grupo</button></div>
+      <div class="row-item"><div><b>Nombre de este equipo</b><div class="muted small" data-bind="deviceName"></div></div><button class="secondary" data-action="rename-me">Cambiar</button></div>
+      <p class="muted small">Para cambiar cómo ves a otro equipo, pulsa sobre su nombre en la lista de una carpeta. Ese nombre solo lo ves tú.</p>
     </section>
-
     <section class="tab" id="tab-advanced" hidden>
       <h3 class="first">Diagnóstico</h3>
-      <p class="muted small">Registro de descubrimiento, conexiones, errores y sincronización. No incluye códigos de unión, claves ni el contenido de los archivos.</p>
+      <p class="muted small">Registro de descubrimiento, conexiones, errores y sincronización. No incluye códigos, claves ni el contenido de los archivos.</p>
       <div class="log-tools">
         <select id="log-level" aria-label="Nivel">
           <option value="INFO">Información y superior</option>

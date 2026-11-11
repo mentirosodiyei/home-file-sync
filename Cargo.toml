@@ -6,7 +6,7 @@ members = ["crates/sfs-core", "crates/sfs-cli", "app/src-tauri"]
 version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/show-file-sync/show-file-sync"
+repository = "https://github.com/mentirosodiyei/home-file-sync"
 rust-version = "1.82"
 
 [profile.release]

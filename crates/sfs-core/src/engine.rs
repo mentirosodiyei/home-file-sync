@@ -106,6 +106,8 @@ pub(crate) struct ConnHandle {
     pub routes: Arc<Mutex<HashMap<u32, mpsc::UnboundedSender<Msg>>>>,
     pub next_id: Arc<AtomicU32>,
     pub close: Arc<watch::Sender<bool>>,
+    /// Conexión entrante que llegó por un túnel VPN.
+    pub via_tunnel: bool,
 }
 
 pub(crate) struct Peer {
@@ -783,6 +785,28 @@ impl Engine {
         }
         self.inner.save_settings();
         self.inner.refresh_advert();
+    }
+
+    /// Tras cambiar «Permitir conexiones por VPN»: comunica de nuevo nuestras
+    /// direcciones y, si se ha desactivado, cierra las sesiones que llegaron
+    /// por un túnel.
+    pub fn apply_vpn_policy(&self) {
+        let caps = crate::protocol::Ext::Caps {
+            version: crate::protocol::EXT_VERSION,
+            listen_port: self.inner.port,
+            addrs: crate::netpath::own_addresses(self.inner.port),
+        }
+        .to_msg();
+        let vpn = crate::netpath::listen_vpn();
+        for p in self.inner.peers.lock().unwrap().values() {
+            if let Some(c) = &p.conn {
+                if c.via_tunnel && !vpn {
+                    let _ = c.close.send(true);
+                } else {
+                    let _ = c.ctrl.send(caps.clone());
+                }
+            }
+        }
     }
 
     /// Lo que anuncia este motor en la red (para un descubrimiento compartido).

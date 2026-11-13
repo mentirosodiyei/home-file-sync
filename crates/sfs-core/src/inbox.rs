@@ -85,6 +85,10 @@ impl Inbox {
         tokio::spawn(async move {
             loop {
                 let Ok((stream, from)) = listener.accept().await else { continue };
+                if stream.local_addr().is_ok_and(|l| !crate::netpath::accept_on(l.ip())) {
+                    tracing::info!("Recepción web desde {from} por VPN rechazada (VPN no permitida)");
+                    continue;
+                }
                 let i = i.clone();
                 tokio::spawn(async move {
                     if let Err(e) = i.handle(stream).await {
@@ -384,12 +388,12 @@ async fn respond(stream: &mut TcpStream, code: u16, ctype: &str, body: &[u8]) ->
 fn local_urls(port: u16, token: &str) -> Vec<String> {
     let mut ifs: Vec<crate::netpath::LocalIf> = crate::netpath::local_interfaces()
         .into_iter()
-        .filter(|i| i.ip.is_ipv4() && crate::netpath::usable(i.ip))
+        .filter(|i| i.ip.is_ipv4() && crate::netpath::usable(i.ip) && (!i.tunnel || crate::netpath::listen_vpn()))
         .filter(|i| !matches!(i.ip, std::net::IpAddr::V4(v) if v.is_link_local()))
         .collect();
     // Redes privadas primero; VPN y túneles al final.
-    let tunnel = |n: &str| ["utun", "tun", "tap", "ppp", "ipsec", "wg", "zt", "vEthernet", "VirtualBox"].iter().any(|p| n.starts_with(p));
-    ifs.sort_by_key(|i| (tunnel(&i.name), !matches!(i.ip, std::net::IpAddr::V4(v) if v.is_private())));
+    let virt = |n: &str| ["vEthernet", "VirtualBox", "vmnet", "bridge"].iter().any(|p| n.starts_with(p));
+    ifs.sort_by_key(|i| (i.tunnel, virt(&i.name), !matches!(i.ip, std::net::IpAddr::V4(v) if v.is_private())));
     ifs.iter().map(|i| format!("http://{}:{port}/r/{token}", i.ip)).collect()
 }
 

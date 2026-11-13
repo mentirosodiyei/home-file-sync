@@ -16,6 +16,8 @@ Sin nube, sin cuentas, sin direcciones IP.
   - Se guardan en la carpeta compartida que elijas, o en *Descargas/Recibidos Home File Sync*.
   - El enlace caduca a los 15 minutos y deja de valer al cerrarlo.
 
+- **Fuera de casa por VPN:** con WireGuard (u otra VPN que llegue a la red de casa) y el ajuste *Permitir conexiones por VPN*, el portátil sigue sincronizando cuando sales de casa. Ver [docs/RED.md](docs/RED.md).
+
 Al cerrar la ventana, Home File Sync sigue funcionando en la **bandeja del sistema** (Windows) o en la **barra de menús** (macOS). Para detenerlo, elige *Salir* en ese menú.
 
 ## Qué garantiza

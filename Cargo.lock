@@ -1719,7 +1719,7 @@ dependencies = [
 
 [[package]]
 name = "home-file-sync"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3627,7 +3627,7 @@ dependencies = [
 
 [[package]]
 name = "sfs-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde_json",
  "sfs-core",
@@ -3637,7 +3637,7 @@ dependencies = [
 
 [[package]]
 name = "sfs-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "chrono",

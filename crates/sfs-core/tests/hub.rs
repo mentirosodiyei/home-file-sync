@@ -270,3 +270,37 @@ async fn join_by_code_with_real_discovery() {
     a.shutdown().await;
     b.shutdown().await;
 }
+
+/// Conexiones por túnel VPN: rechazadas salvo que se permitan en Ajustes.
+/// Usa un túnel real de este equipo (WireGuard, utun…); si no hay, se omite.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vpn_connections_follow_the_setting() {
+    let Some(tun) = sfs_core::netpath::local_interfaces().into_iter().find(|i| i.tunnel && i.ip.is_ipv4()) else {
+        eprintln!("(sin túnel VPN en este equipo: prueba omitida)");
+        return;
+    };
+    let mut casa = Home::new("Casa").await;
+    let mut fuera = Home::new("Portátil fuera").await;
+    let f = casa.folder();
+    std::fs::write(f.join("por vpn.txt"), b"hola").unwrap();
+    let (id, code) = casa.hub.create_share("Casa", &f, ShareMode::Sync).await.unwrap();
+    let via_vpn = SocketAddr::new(tun.ip, casa.hub.share(&id).unwrap().port());
+
+    // Desactivado (por defecto): la conexión por el túnel se rechaza.
+    casa.hub.set_listen_vpn(false);
+    let g = fuera.folder();
+    let e = fuera.hub.join_share_at(via_vpn, &code, &g, ShareMode::Sync).await.unwrap_err();
+    assert!(e.contains("cifrado") || e.contains("conexión") || e.contains("conectar"), "{e}");
+    assert!(casa.hub.network().addresses.iter().any(|a| a.tunnel && a.ip == tun.ip.to_string()));
+
+    // Activado: misma dirección, ahora funciona y sincroniza.
+    casa.hub.set_listen_vpn(true);
+    let code = casa.hub.open_invite(&id).unwrap();
+    fuera.hub.join_share_at(via_vpn, &code, &g, ShareMode::Sync).await.unwrap();
+    wait_for("archivo por la VPN", 30, || g.join("por vpn.txt").exists()).await;
+
+    // Al desactivarlo, la sesión que llegó por el túnel se cierra.
+    casa.hub.set_listen_vpn(false);
+    wait_for("sesión por VPN cerrada", 20, || casa.hub.snapshot().shares[0].state.devices.iter().all(|d| d.detail != "Sincronizado")).await;
+    sfs_core::netpath::set_listen_vpn(false);
+}

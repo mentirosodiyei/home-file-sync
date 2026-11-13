@@ -36,6 +36,16 @@ No usa internet ni ningún servidor externo.
 **«Este equipo no tiene conexión a una red local»**
 - No hay ninguna interfaz con IPv4. Conecta el cable o la wifi.
 
+## Fuera de casa: VPN (WireGuard)
+
+El descubrimiento automático no atraviesa una VPN, porque los túneles no transmiten multicast ni broadcast. Aun así se puede seguir sincronizando fuera de casa:
+
+1. Configura WireGuard para que el equipo que sale de casa pueda llegar a la red de casa. En su configuración, `AllowedIPs` debe incluir la subred de casa, por ejemplo `192.168.1.0/24`. El servidor de WireGuard puede estar en el router o en un equipo de casa.
+2. En *Ajustes → Fuera de casa (VPN)*, activa **Permitir conexiones por VPN** en ese portátil y, si WireGuard funciona en un equipo de casa, también en él.
+3. Si el portátil ya se había conectado en casa, recuerda las direcciones de los demás y reconecta solo al activar la VPN. Si no, usa **Conexión manual** con la dirección de casa del equipo y el puerto de la carpeta, que aparecen en Ajustes.
+
+Con el ajuste desactivado, que es lo predeterminado, el equipo rechaza las conexiones que le llegan por un túnel y no comunica sus direcciones de VPN.
+
 ## Si el descubrimiento no funciona
 
 Home File Sync no depende solo del descubrimiento:

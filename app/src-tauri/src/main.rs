@@ -131,6 +131,22 @@ async fn set_alias(app: State<'_, App>, device_id: String, alias: String) -> Res
 }
 
 #[tauri::command]
+async fn get_network(app: State<'_, App>) -> Result<sfs_core::hub::NetworkView, String> {
+    Ok(app.hub.network())
+}
+
+#[tauri::command]
+async fn set_listen_vpn(app: State<'_, App>, on: bool) -> Result<(), String> {
+    app.hub.set_listen_vpn(on);
+    Ok(())
+}
+
+#[tauri::command]
+async fn app_version() -> Result<String, String> {
+    Ok(env!("CARGO_PKG_VERSION").to_string())
+}
+
+#[tauri::command]
 async fn start_receive(app: State<'_, App>, share: Option<String>) -> Result<sfs_core::inbox::ReceiveView, String> {
     app.hub.start_receive(share.as_deref())
 }
@@ -368,6 +384,9 @@ fn main() {
             set_alias,
             start_receive,
             stop_receive,
+            get_network,
+            set_listen_vpn,
+            app_version,
             get_logs,
             logs_text,
             set_debug_logging,

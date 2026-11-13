@@ -1,5 +1,14 @@
 # Historial de versiones
 
+## 0.3.0
+- **Fuera de casa por VPN (WireGuard):** nuevo ajuste «Permitir conexiones por VPN».
+  - Desactivado por defecto: el equipo solo atiende a la red local.
+  - Activado: acepta conexiones que llegan por un túnel y comunica sus direcciones de VPN a los demás. Si la VPN da acceso a la red de casa, el equipo reconecta solo fuera de casa.
+  - Ajustes muestra las direcciones del equipo y el puerto de cada carpeta, por si hace falta una conexión manual.
+  - Los túneles se detectan en Windows por el tipo de adaptador y en macOS porque son punto a punto.
+- Se quita «Recibir aquí» de cada carpeta. La recepción desde el móvil sigue en el botón superior, eligiendo el destino.
+- Autoría en Ajustes.
+
 ## 0.2.0 — Home File Sync
 La app pasa a ser de uso doméstico y se llama **Home File Sync**. No es compatible con Show File Sync: usa otro servicio de red, otros puertos y otra carpeta interna (`.homefilesync`).
 - **Varias carpetas compartidas por equipo, cada una con sus propios miembros y su código** (por ejemplo, una para la pareja y otra para el padre y el hijo).

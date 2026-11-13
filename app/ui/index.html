@@ -110,6 +110,13 @@
     <section class="tab" id="tab-general">
       <div class="row-item"><div><b>Nombre de este equipo</b><div class="muted small" data-bind="deviceName"></div></div><button class="secondary" data-action="rename-me">Cambiar</button></div>
       <p class="muted small">Para cambiar cómo ves a otro equipo, pulsa sobre su nombre en la lista de una carpeta. Ese nombre solo lo ves tú.</p>
+
+      <h3>Fuera de casa (VPN)</h3>
+      <label class="check"><input type="checkbox" id="vpn-toggle" /> Permitir conexiones por VPN (WireGuard)</label>
+      <p class="muted small">Actívalo en los equipos que quieras usar fuera de casa a través de tu VPN. Si la VPN da acceso a la red de casa, el equipo vuelve a conectar solo con los demás, porque recuerda sus direcciones. La primera vez también puedes unirte con «Conexión manual», usando la dirección de casa y el puerto de la carpeta. Si está desactivado, este equipo solo atiende a la red local.</p>
+      <div class="net-info" id="net-info"></div>
+
+      <footer class="credits"><span id="app-version"></span> · David Redondo García · <span class="selectable">github.com/mentirosodiyei/home-file-sync</span></footer>
     </section>
     <section class="tab" id="tab-advanced" hidden>
       <h3 class="first">Diagnóstico</h3>

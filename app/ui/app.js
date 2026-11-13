@@ -120,7 +120,6 @@ function renderShare(sh) {
     ${errors ? `<ul class="errors">${errors}</ul>` : ""}
     <div class="share-actions">
       <button class="secondary" data-action="invite" data-share="${sh.id}">Invitar equipo</button>
-      <button class="secondary" data-action="receive" data-share="${sh.id}">📱 Recibir aquí</button>
       <button class="secondary" data-action="toggle-mode" data-share="${sh.id}" data-mode="${sh.mode}">${backup ? "Pasar a sincronizada" : "Pasar a copia de seguridad"}</button>
       <span class="spacer-flex"></span>
       <button class="link danger-text" data-action="leave" data-share="${sh.id}" data-name="${esc(name)}">Dejar de compartir</button>
@@ -410,7 +409,28 @@ let logTimer = null;
 function openSettings(tab) {
   openSheet("settings");
   selectTab(tab);
+  loadNetwork();
 }
+
+async function loadNetwork() {
+  try {
+    const n = await invoke("get_network");
+    $("vpn-toggle").checked = !!n.listenVpn;
+    const addr = n.addresses.map((a) => `<li><code class="selectable">${esc(a.ip)}</code> <span class="muted">${esc(a.interface)}${a.tunnel ? " · VPN" : ""}</span></li>`).join("");
+    const ports = n.ports.map((p) => `<li>«${esc(p.share)}» · puerto <code class="selectable">${p.port}</code></li>`).join("");
+    $("net-info").innerHTML =
+      `<div><b class="small">Direcciones de este equipo</b><ul class="plain">${addr || '<li class="muted">Sin red</li>'}</ul></div>` +
+      `<div><b class="small">Puerto de cada carpeta</b><ul class="plain">${ports || '<li class="muted">Ninguna carpeta todavía</li>'}</ul></div>`;
+    if (!$("app-version").textContent) $("app-version").textContent = `Home File Sync ${await invoke("app_version")}`;
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+$("vpn-toggle").addEventListener("change", async (e) => {
+  await invoke("set_listen_vpn", { on: e.target.checked });
+  loadNetwork();
+});
 
 function selectTab(tab) {
   document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
@@ -502,5 +522,12 @@ function demoInvoke(cmd, args) {
       received: [{ name: "IMG_3301.HEIC", size: 2.4e6 }],
     });
   if (cmd === "get_logs") return Promise.resolve({ entries: [], debug: false, dir: null });
+  if (cmd === "get_network")
+    return Promise.resolve({
+      listenVpn: false,
+      addresses: [{ interface: "en0", ip: "192.168.1.20", tunnel: false }, { interface: "utun4", ip: "10.8.0.2", tunnel: true }],
+      ports: [{ share: "Pareja", port: 47820 }, { share: "Papá e hijo", port: 47822 }],
+    });
+  if (cmd === "app_version") return Promise.resolve("0.3.0");
   return Promise.resolve(null);
 }

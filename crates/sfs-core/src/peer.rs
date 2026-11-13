@@ -151,7 +151,7 @@ pub(crate) async fn dial(inner: Arc<Inner>, cands: &[Candidate], quiet: bool) ->
                 inner.learn_addr(&remote, Candidate { addr: c.addr, source: AddrSource::Learned });
             }
             let my_id = inner.my_id.clone();
-            tokio::spawn(run_session(inner, hs, remote.clone(), name, my_id, None));
+            tokio::spawn(run_session(inner, hs, remote.clone(), name, my_id, None, false));
             Ok(remote)
         }
         Ok(Msg::Reject { reason }) => {
@@ -230,6 +230,13 @@ pub(crate) async fn accept_loop(inner: Arc<Inner>, listener: TcpListener) {
             tokio::time::sleep(Duration::from_millis(200)).await;
             continue;
         };
+        // Conexiones que llegan por un túnel VPN: solo si el usuario lo permite.
+        if let Ok(local) = stream.local_addr() {
+            if !crate::netpath::accept_on(local.ip()) {
+                tracing::info!("Conexión desde {addr} por VPN ({}) rechazada: «Permitir conexiones por VPN» está desactivado", local.ip());
+                continue;
+            }
+        }
         let i = inner.clone();
         tokio::spawn(async move {
             tracing::debug!("Conexión entrante desde {addr}");
@@ -242,6 +249,7 @@ pub(crate) async fn accept_loop(inner: Arc<Inner>, listener: TcpListener) {
 
 async fn accept_one(inner: Arc<Inner>, stream: TcpStream) -> Result<(), String> {
     let observed = stream.peer_addr().ok();
+    let via_tunnel = stream.local_addr().is_ok_and(|l| crate::netpath::is_tunnel_addr(l.ip()));
     let mut hs = timeout(HANDSHAKE_TIMEOUT, handshake(stream, &inner.private_key, false))
         .await
         .map_err(|_| "timeout")?
@@ -270,7 +278,7 @@ async fn accept_one(inner: Arc<Inner>, stream: TcpStream) -> Result<(), String> 
                 .send(&Msg::Welcome { name: inner.name(), proof: group_proof(&key, "server", &hs.handshake_hash) })
                 .await
                 .map_err(io_text)?;
-            run_session(inner, hs, remote.clone(), name, remote, observed).await;
+            run_session(inner, hs, remote.clone(), name, remote, observed, via_tunnel).await;
             Ok(())
         }
         Msg::PairStart { proto, name, spake } => pair_as_member(inner, hs, proto, name, spake).await,
@@ -385,7 +393,7 @@ fn unregister(inner: &Inner, remote: &str, conn_id: u64) {
 
 /// `observed` es la dirección de origen de una conexión entrante (para
 /// aprender por dónde se alcanza a ese equipo).
-pub(crate) async fn run_session(inner: Arc<Inner>, hs: Handshaken, remote: String, name: String, dialer: String, observed: Option<SocketAddr>) {
+pub(crate) async fn run_session(inner: Arc<Inner>, hs: Handshaken, remote: String, name: String, dialer: String, observed: Option<SocketAddr>, via_tunnel: bool) {
     let Handshaken { mut reader, writer, .. } = hs;
     let name: String = name.chars().filter(|c| !c.is_control()).take(60).collect();
     let conn_id = inner.next_conn.fetch_add(1, Ordering::Relaxed);
@@ -400,6 +408,7 @@ pub(crate) async fn run_session(inner: Arc<Inner>, hs: Handshaken, remote: Strin
         routes: Arc::new(Mutex::new(HashMap::new())),
         next_id: Arc::new(AtomicU32::new(1)),
         close: Arc::new(close_tx),
+        via_tunnel,
     };
     if !register(&inner, &remote, &name, handle.clone()) {
         return;

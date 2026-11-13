@@ -68,6 +68,9 @@ struct HubSettings {
     /// Carpetas compartidas de este equipo (ids locales, en orden).
     #[serde(default)]
     shares: Vec<String>,
+    /// Aceptar conexiones que llegan por túneles VPN (WireGuard…).
+    #[serde(default)]
+    listen_vpn: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -87,6 +90,31 @@ pub struct InviteView {
     pub device_name: String,
     pub group_id: String,
     pub group_name: String,
+}
+
+/// Una dirección de red de este equipo (para configurar una VPN o una conexión manual).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddressView {
+    pub interface: String,
+    pub ip: String,
+    pub tunnel: bool,
+}
+
+/// Puerto de cada carpeta compartida (para una conexión manual a través de VPN).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortView {
+    pub share: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkView {
+    pub listen_vpn: bool,
+    pub addresses: Vec<AddressView>,
+    pub ports: Vec<PortView>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -140,6 +168,7 @@ impl Hub {
                     device_name: default_device_name(),
                     aliases: BTreeMap::new(),
                     shares: Vec::new(),
+                    listen_vpn: false,
                 }
             }
         };
@@ -147,6 +176,7 @@ impl Hub {
             settings.device_name = n.clone();
         }
         let my_id = crate::auth::device_id(&hex::decode(&settings.public_key).unwrap_or_default());
+        crate::netpath::set_listen_vpn(settings.listen_vpn);
         let inbox = match Inbox::start(cfg.inbox_port, &settings.device_name).await {
             Ok(i) => Some(i),
             Err(e) => {
@@ -498,6 +528,43 @@ impl Hub {
             }
         }
         self.save();
+    }
+
+    // -----------------------------------------------------------------------
+    // VPN
+    // -----------------------------------------------------------------------
+
+    /// Permite o impide las conexiones que llegan por túneles VPN.
+    pub fn set_listen_vpn(&self, on: bool) {
+        self.inner.settings.lock().unwrap().listen_vpn = on;
+        self.save();
+        crate::netpath::set_listen_vpn(on);
+        tracing::info!("Conexiones por VPN {}", if on { "permitidas" } else { "no permitidas" });
+        for e in self.inner.shares.lock().unwrap().values() {
+            e.apply_vpn_policy();
+        }
+    }
+
+    /// Direcciones de este equipo y puerto de cada carpeta.
+    pub fn network(&self) -> NetworkView {
+        let mut addresses: Vec<AddressView> = crate::netpath::local_interfaces()
+            .into_iter()
+            .filter(|i| i.ip.is_ipv4() && crate::netpath::usable(i.ip))
+            .map(|i| AddressView { interface: i.name, ip: i.ip.to_string(), tunnel: i.tunnel })
+            .collect();
+        addresses.sort_by_key(|a| a.tunnel);
+        let map = self.inner.shares.lock().unwrap();
+        let ports = self
+            .inner
+            .settings
+            .lock()
+            .unwrap()
+            .shares
+            .iter()
+            .filter_map(|id| map.get(id))
+            .map(|e| PortView { share: e.snapshot().group.map(|g| g.name).unwrap_or_default(), port: e.port() })
+            .collect();
+        NetworkView { listen_vpn: crate::netpath::listen_vpn(), addresses, ports }
     }
 
     // -----------------------------------------------------------------------

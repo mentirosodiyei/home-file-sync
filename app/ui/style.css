@@ -284,3 +284,10 @@ h3.first { margin-top: 0; }
 .received li { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
 .share-head .share-name.link-plain { font-size: 16px; font-weight: 650; }
 .share .devices .name.link-plain { font-weight: 600; }
+
+/* --- Ajustes: VPN y créditos --- */
+.net-info { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; }
+.net-info ul.plain { list-style: none; padding: 0; margin: 6px 0 0; font-size: 12.5px; }
+.net-info ul.plain li { padding: 3px 0; }
+.credits { margin-top: auto; padding-top: 28px; font-size: 11px; color: var(--muted); opacity: 0.75; text-align: center; }
+@media (max-width: 520px) { .net-info { grid-template-columns: 1fr; } }

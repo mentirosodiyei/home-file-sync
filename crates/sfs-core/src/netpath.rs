@@ -59,6 +59,94 @@ pub struct LocalIf {
     pub name: String,
     pub ip: IpAddr,
     pub prefix: u8,
+    /// Túnel VPN (WireGuard, OpenVPN, IPsec, PPP…), no una red local física.
+    pub tunnel: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Túneles VPN
+// ---------------------------------------------------------------------------
+
+static LISTEN_VPN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Permite (o no) conexiones a través de túneles VPN. Desactivado por
+/// defecto: sin este ajuste, el equipo solo atiende a la red local y no
+/// comunica a los demás sus direcciones de VPN.
+pub fn set_listen_vpn(on: bool) {
+    LISTEN_VPN.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn listen_vpn() -> bool {
+    LISTEN_VPN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// ¿Esta dirección local pertenece a un túnel VPN?
+pub fn is_tunnel_addr(ip: IpAddr) -> bool {
+    let ip = match ip {
+        IpAddr::V6(v) => v.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(IpAddr::V6(v)),
+        v4 => v4,
+    };
+    local_interfaces().iter().any(|i| i.ip == ip && i.tunnel)
+}
+
+/// ¿Debe aceptarse una conexión que llega a la dirección local `local`?
+pub fn accept_on(local: IpAddr) -> bool {
+    listen_vpn() || !is_tunnel_addr(local)
+}
+
+/// Nombres típicos de túneles en macOS/Linux y de adaptadores VPN conocidos.
+fn tunnel_name(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    ["utun", "tun", "tap", "wg", "ppp", "ipsec", "zt", "tailscale", "wireguard", "wintun", "openvpn", "gpd", "nordlynx", "proton"].iter().any(|p| n.starts_with(p))
+}
+
+/// Windows: índices de los adaptadores que son túneles, según su tipo
+/// (`IF_TYPE_PPP`, `IF_TYPE_TUNNEL`, `IF_TYPE_PROP_VIRTUAL` como WireGuard/Wintun)
+/// o su descripción. El nombre visible lo elige el usuario y no sirve.
+#[cfg(windows)]
+fn windows_tunnel_indexes() -> std::collections::HashSet<u32> {
+    use windows_sys::Win32::NetworkManagement::IpHelper::{GetAdaptersAddresses, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH};
+    let mut set = std::collections::HashSet::new();
+    let mut size: u32 = 32 * 1024;
+    for _ in 0..3 {
+        let mut buf = vec![0u8; size as usize];
+        let p = buf.as_mut_ptr() as *mut IP_ADAPTER_ADDRESSES_LH;
+        // AF_UNSPEC = 0
+        let r = unsafe { GetAdaptersAddresses(0, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST, std::ptr::null(), p, &mut size) };
+        if r == 111 {
+            continue; // ERROR_BUFFER_OVERFLOW: reintenta con el tamaño indicado
+        }
+        if r != 0 {
+            break;
+        }
+        let mut cur = p as *const IP_ADAPTER_ADDRESSES_LH;
+        while !cur.is_null() {
+            let a = unsafe { &*cur };
+            let desc = unsafe { wide_to_string(a.Description) }.to_ascii_lowercase();
+            let virt = matches!(a.IfType, 23 | 131 | 53);
+            let known = ["wireguard", "wintun", "tap-windows", "openvpn", "tailscale", "zerotier", "vpn"].iter().any(|k| desc.contains(k));
+            if virt || known {
+                let idx = unsafe { a.Anonymous1.Anonymous.IfIndex };
+                set.insert(idx);
+                set.insert(a.Ipv6IfIndex);
+            }
+            cur = a.Next;
+        }
+        break;
+    }
+    set
+}
+
+#[cfg(windows)]
+unsafe fn wide_to_string(p: *const u16) -> String {
+    if p.is_null() {
+        return String::new();
+    }
+    let mut len = 0;
+    while *p.add(len) != 0 {
+        len += 1;
+    }
+    String::from_utf16_lossy(std::slice::from_raw_parts(p, len))
 }
 
 /// Interfaces locales (sin loopback).
@@ -66,19 +154,21 @@ pub fn local_interfaces() -> Vec<LocalIf> {
     let Ok(ifs) = if_addrs::get_if_addrs() else {
         return Vec::new();
     };
+    #[cfg(windows)]
+    let win_tunnels = windows_tunnel_indexes();
     ifs.into_iter()
         .filter(|i| !i.is_loopback())
-        .map(|i| match i.addr {
-            if_addrs::IfAddr::V4(a) => LocalIf {
-                name: i.name,
-                ip: IpAddr::V4(a.ip),
-                prefix: u32::from(a.netmask).count_ones() as u8,
-            },
-            if_addrs::IfAddr::V6(a) => LocalIf {
-                name: i.name,
-                ip: IpAddr::V6(a.ip),
-                prefix: u128::from(a.netmask).count_ones() as u8,
-            },
+        .map(|i| {
+            #[cfg(windows)]
+            let os_tunnel = i.index.is_some_and(|x| win_tunnels.contains(&x));
+            // macOS/Linux: los túneles son punto a punto (sin broadcast).
+            #[cfg(not(windows))]
+            let os_tunnel = matches!(&i.addr, if_addrs::IfAddr::V4(a) if a.broadcast.is_none());
+            let tunnel = os_tunnel || tunnel_name(&i.name);
+            match i.addr {
+                if_addrs::IfAddr::V4(a) => LocalIf { name: i.name, ip: IpAddr::V4(a.ip), prefix: u32::from(a.netmask).count_ones() as u8, tunnel },
+                if_addrs::IfAddr::V6(a) => LocalIf { name: i.name, ip: IpAddr::V6(a.ip), prefix: u128::from(a.netmask).count_ones() as u8, tunnel },
+            }
         })
         .collect()
 }
@@ -108,7 +198,8 @@ fn same_subnet(a: IpAddr, b: IpAddr, prefix: u8) -> bool {
 
 /// Direcciones propias (todas las interfaces de red) con el puerto de escucha.
 pub fn own_addresses(port: u16) -> Vec<String> {
-    let mut ifs: Vec<LocalIf> = local_interfaces().into_iter().filter(|i| usable(i.ip)).collect();
+    let vpn = listen_vpn();
+    let mut ifs: Vec<LocalIf> = local_interfaces().into_iter().filter(|i| usable(i.ip) && (vpn || !i.tunnel)).collect();
     // IPv4 de red primero; enlace local al final.
     ifs.sort_by_key(|i| (is_link_local(i.ip), !i.ip.is_ipv4()));
     let mut v: Vec<String> = ifs.iter().map(|i| SocketAddr::new(i.ip, port).to_string()).collect();
@@ -553,11 +644,13 @@ mod tests {
                 name: "en8".into(),
                 ip: "192.168.1.102".parse().unwrap(),
                 prefix: 24,
+                tunnel: false,
             },
             LocalIf {
                 name: "en0".into(),
                 ip: "10.0.0.5".parse().unwrap(),
                 prefix: 16,
+                tunnel: false,
             },
         ]
     }
@@ -590,6 +683,16 @@ mod tests {
             .iter()
             .any(|a| a.starts_with("[fe80") || a.starts_with("0.0.0.0")));
         assert_eq!(addrs.len(), 5);
+    }
+
+    #[test]
+    fn tunnel_names() {
+        for n in ["utun3", "wg0", "tun0", "ppp0", "ipsec0", "tailscale0", "WireGuard Casa", "ProtonVPN"] {
+            assert!(tunnel_name(n), "{n}");
+        }
+        for n in ["en0", "en8", "eth0", "Wi-Fi", "Ethernet", "bridge100"] {
+            assert!(!tunnel_name(n), "{n}");
+        }
     }
 
     #[test]

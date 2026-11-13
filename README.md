@@ -61,8 +61,8 @@ Descarga la última versión en [Releases](../../releases).
 
 | Sistema | Archivo |
 |---|---|
-| macOS 11 Big Sur o posterior (Apple Silicon e Intel) | `Home File Sync x.y.z - macOS (Apple Silicon e Intel).dmg` |
-| Windows 10 / 11 (64 bits) | `Home File Sync x.y.z - Windows.exe` |
+| macOS 11 Big Sur o posterior (Apple Silicon e Intel) | `HomeFileSync-x.y.z-macOS.dmg` |
+| Windows 10 / 11 (64 bits) | `HomeFileSync-x.y.z-Windows.exe` |
 
 **macOS**
 - La app no está firmada con un certificado de desarrollador de Apple. La primera vez macOS avisará de que no puede comprobarla: ve a *Ajustes del Sistema → Privacidad y seguridad* y pulsa **Abrir igualmente**.

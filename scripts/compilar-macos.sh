@@ -14,6 +14,20 @@
 set -euo pipefail
 cd "$(dirname "$0")/../app/src-tauri"
 
+# Sin rutas personales en los ejecutables (usuario, carpetas): el compilador
+# las sustituye por prefijos genéricos.
+ROOT="$(cd ../.. && pwd)"
+# CARGO_ENCODED_RUSTFLAGS separa con 0x1f: admite rutas con espacios.
+US=$(printf '\x1f')
+export CARGO_ENCODED_RUSTFLAGS="--remap-path-prefix=$ROOT=/src${US}--remap-path-prefix=$HOME/.cargo=/cargo${US}--remap-path-prefix=$HOME/.rustup=/rustup${US}--remap-path-prefix=$HOME=/home"
+
+# Versión pública: `scripts/compilar-macos.sh --publico` firma sin certificado
+# personal (el de "Apple Development" incluye el correo de su titular).
+# Para distribuir sin avisos de Gatekeeper hace falta un "Developer ID".
+if [ "${1:-}" = "--publico" ]; then
+  SFS_SIGN_IDENTITY="${SFS_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | grep -m1 '"Developer ID Application' | awk '{print $2}' || true)}"
+  SFS_SIGN_IDENTITY="${SFS_SIGN_IDENTITY:--}"
+fi
 ID="${SFS_SIGN_IDENTITY:-}"
 if [ -z "$ID" ]; then
   ID=$(security find-identity -v -p codesigning 2>/dev/null | grep -m1 '"Developer ID Application' | awk '{print $2}' || true)

@@ -6,6 +6,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/../app/src-tauri"
 export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
-export PATH="$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$PATH"
+# Sin rutas personales en los ejecutables (usuario, carpetas): el compilador
+# las sustituye por prefijos genéricos. cargo-xwin no admite espacios en esas
+# opciones, así que se compila a través de un enlace sin espacios.
+ROOT="$(cd ../.. && pwd)"
+LINK="${TMPDIR:-/tmp}/hfs-src-$$"
+ln -s "$ROOT" "$LINK"
+trap 'rm -f "$LINK"' EXIT
+cd "$LINK/app/src-tauri"
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$LINK=/src --remap-path-prefix=$HOME/.cargo=/cargo --remap-path-prefix=$HOME/.rustup=/rustup --remap-path-prefix=$HOME=/home"
 npx --yes @tauri-apps/cli@2 build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis
-ls -la ../../target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+ls -la "$ROOT"/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe

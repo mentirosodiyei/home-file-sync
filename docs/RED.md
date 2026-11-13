@@ -10,7 +10,7 @@ Home File Sync no necesita configuración de red, pero sí que los equipos
 | Descubrimiento (Bonjour/mDNS) | UDP multicast | 5353 |
 | Descubrimiento de respaldo (baliza) | UDP broadcast | 47821 |
 | Recepción desde el móvil (navegador) | TCP (HTTP) | 47830 |
-| Sincronización (cifrada) | TCP | 47820 (y siguientes libres, uno por carpeta compartida) |
+| Sincronización (cifrada) | TCP | 47820 para la primera carpeta; un puerto libre para cada una de las demás |
 
 No usa internet ni ningún servidor externo.
 

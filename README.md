@@ -1,5 +1,7 @@
 # Home File Sync
 
+**Castellano** · [Català](README.ca.md) · [English](README.en.md)
+
 **Carpetas compartidas entre los ordenadores de casa, en tu propia red.**
 Windows y macOS, sin nube, sin cuentas y sin configurar direcciones IP. Y para enviar fotos desde el móvil basta con escanear un código QR.
 
@@ -15,6 +17,7 @@ Windows y macOS, sin nube, sin cuentas y sin configurar direcciones IP. Y para e
 - 🏷️ **Nombres a tu gusto.** Puedes llamar a cada equipo como quieras («Ana», «PC del salón»…). Ese nombre solo lo ves tú.
 - 🔒 **Privado y cifrado.** Los archivos van directamente de un equipo a otro por tu red, cifrados; no pasan por ningún servidor ni por internet.
 - 🌍 **También fuera de casa**, a través de tu propia VPN (por ejemplo, WireGuard).
+- 🗣️ **En català, castellano e inglés**, según el idioma del sistema.
 
 ## Cómo se usa
 
@@ -46,6 +49,7 @@ Pulsa **📱 Recibir del móvil** y elige dónde guardar lo que llegue. Escanea 
 
 - El enlace caduca a los 15 minutos y deja de funcionar al cerrar la ventana.
 - Nunca sobrescribe un archivo: si ya existe uno con ese nombre, guarda «(2)».
+- La página del móvil sale en el idioma del teléfono.
 
 ### 4. Ajustes
 
@@ -127,12 +131,12 @@ scripts/compilar-windows-desde-mac.sh
 scripts/publicar-instaladores.sh
 ```
 
-`scripts/capturas.sh` regenera las capturas de este README con datos de ejemplo.
+`scripts/capturas.sh` regenera las capturas de estos README, en los tres idiomas, con datos de ejemplo.
 
 ### Estructura
 
 ```
-crates/sfs-core   motor: descubrimiento, emparejamiento, sincronización, hub, recepción web
+crates/sfs-core   motor: descubrimiento, emparejamiento, sincronización, hub, recepción web, traducciones
 crates/sfs-cli    versión sin interfaz (diagnóstico y pruebas)
 app/src-tauri     aplicación de escritorio (Tauri 2)
 app/ui            interfaz (HTML/CSS/JS sin dependencias)

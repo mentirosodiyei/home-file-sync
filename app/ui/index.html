@@ -13,8 +13,8 @@
       <span>HOME FILE SYNC</span>
     </div>
     <div class="top-right">
-      <button class="me-name link" data-action="rename-me" title="Cambiar el nombre de este equipo"><span class="dot synced"></span><span data-bind="deviceName"></span></button>
-      <button class="icon gear" data-action="settings" aria-label="Ajustes" title="Ajustes">
+      <button class="me-name link" data-action="rename-me" data-i18n-title="app.rename_me"><span class="dot synced"></span><span data-bind="deviceName"></span></button>
+      <button class="icon gear" data-action="settings" data-i18n-title="app.settings">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
       </button>
     </div>
@@ -22,17 +22,17 @@
 
   <main>
     <div class="actions">
-      <button class="primary" data-action="new-share">＋ Nueva carpeta compartida</button>
-      <button class="secondary" data-action="join">Unirme con código</button>
-      <button class="secondary" data-action="receive">📱 Recibir del móvil</button>
+      <button class="primary" data-action="new-share" data-i18n="act.new"></button>
+      <button class="secondary" data-action="join" data-i18n="act.join"></button>
+      <button class="secondary" data-action="receive" data-i18n="act.receive"></button>
     </div>
 
     <div class="banner invite" id="invites" hidden></div>
     <div class="banner warn" id="net-warning" hidden></div>
 
     <section id="empty" class="hero" hidden>
-      <h1>Comparte carpetas entre los ordenadores de casa</h1>
-      <p>Crea una carpeta compartida y únete a ella desde los otros equipos con un código. Cada carpeta tiene sus propios miembros: puedes tener una con tu pareja, otra con tus hijos y una copia de seguridad en el ordenador del salón.</p>
+      <h1 data-i18n="empty.title"></h1>
+      <p data-i18n="empty.text"></p>
     </section>
 
     <div id="shares"></div>
@@ -40,102 +40,102 @@
 
   <!-- Nueva carpeta compartida -->
   <div class="sheet" id="sheet-new" hidden>
-    <div class="sheet-head"><h2>Nueva carpeta compartida</h2><button class="link" data-close>Cancelar</button></div>
+    <div class="sheet-head"><h2 data-i18n="new.title"></h2><button class="link" data-close data-i18n="cancel"></button></div>
     <form class="tab form" id="form-new" autocomplete="off">
-      <label>Nombre (lo verán los demás al unirse)<input id="new-name" placeholder="Fotos de la familia" maxlength="60" /></label>
-      <div class="field"><span class="label">Carpeta de este equipo</span><div class="pick"><code id="new-folder">Sin elegir</code><button type="button" class="secondary" data-pick="new-folder">Elegir…</button></div></div>
+      <label><span data-i18n="new.name"></span><input id="new-name" data-i18n-ph="new.name_ph" maxlength="60" /></label>
+      <div class="field"><span class="label" data-i18n="new.folder"></span><div class="pick"><code id="new-folder" data-i18n="not_chosen"></code><button type="button" class="secondary" data-pick="new-folder" data-i18n="choose"></button></div></div>
       <fieldset class="modes">
-        <label class="mode"><input type="radio" name="new-mode" value="sync" checked /><b>Sincronizada</b><span>Lo que cambie en cualquier equipo se replica en todos: es como una sola carpeta.</span></label>
-        <label class="mode"><input type="radio" name="new-mode" value="backup" /><b>Copia de seguridad</b><span>Este equipo solo recibe. Lo que se borre en los demás se conserva aquí.</span></label>
+        <label class="mode"><input type="radio" name="new-mode" value="sync" checked /><b data-i18n="mode.sync"></b><span data-i18n="mode.sync_new"></span></label>
+        <label class="mode"><input type="radio" name="new-mode" value="backup" /><b data-i18n="mode.backup"></b><span data-i18n="mode.backup_new"></span></label>
       </fieldset>
       <div class="error" id="new-error" hidden></div>
-      <div class="form-actions"><button class="primary" type="submit">Crear y mostrar código</button></div>
+      <div class="form-actions"><button class="primary" type="submit" data-i18n="new.create"></button></div>
     </form>
   </div>
 
   <!-- Unirse -->
   <div class="sheet" id="sheet-join" hidden>
-    <div class="sheet-head"><h2>Unirme a una carpeta compartida</h2><button class="link" data-close>Cancelar</button></div>
+    <div class="sheet-head"><h2 data-i18n="join.title"></h2><button class="link" data-close data-i18n="cancel"></button></div>
     <form class="tab form" id="form-join" autocomplete="off">
-      <div class="field"><span class="label">Carpetas esperando equipos en tu red</span><div id="join-invites"></div></div>
-      <label>Código que muestra el otro equipo<input id="join-code" class="code-input" inputmode="numeric" placeholder="0000 0000" maxlength="9" /></label>
-      <div class="field"><span class="label">Dónde guardarla en este equipo</span><div class="pick"><code id="join-folder">Sin elegir</code><button type="button" class="secondary" data-pick="join-folder">Elegir…</button></div></div>
+      <div class="field"><span class="label" data-i18n="join.invites"></span><div id="join-invites"></div></div>
+      <label><span data-i18n="join.code"></span><input id="join-code" class="code-input" inputmode="numeric" placeholder="0000 0000" maxlength="9" /></label>
+      <div class="field"><span class="label" data-i18n="join.folder"></span><div class="pick"><code id="join-folder" data-i18n="not_chosen"></code><button type="button" class="secondary" data-pick="join-folder" data-i18n="choose"></button></div></div>
       <fieldset class="modes">
-        <label class="mode"><input type="radio" name="join-mode" value="sync" checked /><b>Sincronizada</b><span>Como una sola carpeta en todos los equipos.</span></label>
-        <label class="mode"><input type="radio" name="join-mode" value="backup" /><b>Copia de seguridad</b><span>Solo recibir; conservar lo que se borre en los demás.</span></label>
+        <label class="mode"><input type="radio" name="join-mode" value="sync" checked /><b data-i18n="mode.sync"></b><span data-i18n="mode.sync_join"></span></label>
+        <label class="mode"><input type="radio" name="join-mode" value="backup" /><b data-i18n="mode.backup"></b><span data-i18n="mode.backup_join"></span></label>
       </fieldset>
       <details class="manual" id="manual">
-        <summary>Conexión manual</summary>
-        <p class="muted small">Solo si la carpeta no aparece arriba: escribe la dirección del equipo que muestra el código.</p>
+        <summary data-i18n="manual.title"></summary>
+        <p class="muted small" data-i18n="manual.help"></p>
         <div class="manual-grid">
-          <label>Dirección IP o nombre<input id="m-host" placeholder="192.168.1.20 o Portatil-Ana" spellcheck="false" autocapitalize="off" /></label>
-          <label>Puerto<input id="m-port" inputmode="numeric" placeholder="47820" maxlength="5" /></label>
+          <label><span data-i18n="manual.host"></span><input id="m-host" data-i18n-ph="manual.host_ph" spellcheck="false" autocapitalize="off" /></label>
+          <label><span data-i18n="manual.port"></span><input id="m-port" inputmode="numeric" placeholder="47820" maxlength="5" /></label>
         </div>
-        <label class="check"><input type="checkbox" id="m-remember" /> Recordar esta dirección</label>
+        <label class="check"><input type="checkbox" id="m-remember" /> <span data-i18n="manual.remember"></span></label>
       </details>
       <div class="error" id="join-error" hidden></div>
-      <div class="form-actions"><button class="primary" type="submit" id="join-btn">Unirme</button></div>
+      <div class="form-actions"><button class="primary" type="submit" id="join-btn" data-i18n="join.button"></button></div>
     </form>
   </div>
 
   <!-- Recibir del móvil -->
   <div class="sheet" id="sheet-receive" hidden>
-    <div class="sheet-head"><h2>Recibir archivos</h2><button class="link" data-action="stop-receive">Cerrar</button></div>
+    <div class="sheet-head"><h2 data-i18n="rx.title"></h2><button class="link" data-action="stop-receive" data-i18n="close"></button></div>
     <section class="tab receive">
-      <label>Guardar en<select id="rx-dest"></select></label>
+      <label><span data-i18n="rx.save_in"></span><select id="rx-dest"></select></label>
       <div class="qr-wrap">
         <div class="qr" id="rx-qr"></div>
         <div class="rx-text">
-          <p><b>Escanea el código con la cámara del móvil</b> o abre esta dirección en cualquier navegador de la misma red. No hace falta instalar nada.</p>
+          <p data-i18n-html="rx.help"></p>
           <code id="rx-url" class="selectable"></code>
           <p class="muted small" id="rx-other"></p>
           <p class="muted small" id="rx-expiry"></p>
         </div>
       </div>
-      <h3>Recibido</h3>
-      <ul class="received" id="rx-list"><li class="muted">Todavía nada</li></ul>
+      <h3 data-i18n="rx.received"></h3>
+      <ul class="received" id="rx-list"></ul>
     </section>
   </div>
 
   <!-- Ajustes -->
   <div class="sheet" id="settings" hidden>
     <div class="sheet-head">
-      <h2>Ajustes</h2>
+      <h2 data-i18n="set.title"></h2>
       <div class="tabs" role="tablist">
-        <button role="tab" data-tab="general" class="active">General</button>
-        <button role="tab" data-tab="advanced">Avanzado</button>
+        <button role="tab" data-tab="general" class="active" data-i18n="set.general"></button>
+        <button role="tab" data-tab="advanced" data-i18n="set.advanced"></button>
       </div>
-      <button class="link" data-action="close-settings">Cerrar</button>
+      <button class="link" data-action="close-settings" data-i18n="close"></button>
     </div>
     <section class="tab" id="tab-general">
-      <div class="row-item"><div><b>Nombre de este equipo</b><div class="muted small" data-bind="deviceName"></div></div><button class="secondary" data-action="rename-me">Cambiar</button></div>
-      <p class="muted small">Para cambiar cómo ves a otro equipo, pulsa sobre su nombre en la lista de una carpeta. Ese nombre solo lo ves tú.</p>
+      <div class="row-item"><div><b data-i18n="set.device_name"></b><div class="muted small" data-bind="deviceName"></div></div><button class="secondary" data-action="rename-me" data-i18n="set.change"></button></div>
+      <p class="muted small" data-i18n="set.alias_help"></p>
 
-      <h3>Fuera de casa (VPN)</h3>
-      <label class="check"><input type="checkbox" id="vpn-toggle" /> Permitir conexiones por VPN (WireGuard)</label>
-      <p class="muted small">Actívalo en los equipos que quieras usar fuera de casa a través de tu VPN. Si la VPN da acceso a la red de casa, el equipo vuelve a conectar solo con los demás, porque recuerda sus direcciones. La primera vez también puedes unirte con «Conexión manual», usando la dirección de casa y el puerto de la carpeta. Si está desactivado, este equipo solo atiende a la red local.</p>
+      <h3 data-i18n="set.vpn_title"></h3>
+      <label class="check"><input type="checkbox" id="vpn-toggle" /> <span data-i18n="set.vpn_toggle"></span></label>
+      <p class="muted small" data-i18n="set.vpn_help"></p>
       <div class="net-info" id="net-info"></div>
 
       <footer class="credits"><span id="app-version"></span> · David Redondo García · <span class="selectable">github.com/mentirosodiyei/home-file-sync</span></footer>
     </section>
     <section class="tab" id="tab-advanced" hidden>
-      <h3 class="first">Diagnóstico</h3>
-      <p class="muted small">Registro de descubrimiento, conexiones, errores y sincronización. No incluye códigos, claves ni el contenido de los archivos.</p>
+      <h3 class="first" data-i18n="diag.title"></h3>
+      <p class="muted small" data-i18n="diag.help"></p>
       <div class="log-tools">
-        <select id="log-level" aria-label="Nivel">
-          <option value="INFO">Información y superior</option>
-          <option value="WARN">Avisos y errores</option>
-          <option value="ERROR">Solo errores</option>
-          <option value="DEBUG">Todo (incluye depuración)</option>
+        <select id="log-level" data-i18n-title="diag.level">
+          <option value="INFO" data-i18n="diag.info"></option>
+          <option value="WARN" data-i18n="diag.warn"></option>
+          <option value="ERROR" data-i18n="diag.error"></option>
+          <option value="DEBUG" data-i18n="diag.debug"></option>
         </select>
-        <input id="log-query" type="search" placeholder="Filtrar…" spellcheck="false" />
+        <input id="log-query" type="search" data-i18n-ph="diag.filter" spellcheck="false" />
       </div>
       <div class="log-tools">
-        <label class="check"><input type="checkbox" id="log-debug" /> Registro detallado (DEBUG)</label>
+        <label class="check"><input type="checkbox" id="log-debug" /> <span data-i18n="diag.detailed"></span></label>
         <span class="spacer-flex"></span>
-        <button class="secondary" data-action="copy-logs">Copiar</button>
-        <button class="secondary" data-action="export-logs">Exportar…</button>
-        <button class="secondary" data-action="open-logs">Carpeta</button>
+        <button class="secondary" data-action="copy-logs" data-i18n="diag.copy"></button>
+        <button class="secondary" data-action="export-logs" data-i18n="diag.export"></button>
+        <button class="secondary" data-action="open-logs" data-i18n="diag.folder"></button>
       </div>
       <pre class="log" id="log" tabindex="0"></pre>
       <p class="muted small" id="log-status"></p>
@@ -146,10 +146,11 @@
     <form method="dialog">
       <p id="dialog-text"></p>
       <input id="dialog-input" hidden />
-      <menu><button value="cancel" class="secondary">Cancelar</button><button value="ok" class="primary" id="dialog-ok">Aceptar</button></menu>
+      <menu><button value="cancel" class="secondary" data-i18n="cancel"></button><button value="ok" class="primary" id="dialog-ok" data-i18n="accept"></button></menu>
     </form>
   </dialog>
 
+  <script src="i18n.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

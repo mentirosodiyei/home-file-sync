@@ -1,0 +1,2 @@
+/* Aviso del permiso «Red local» de macOS */
+"NSLocalNetworkUsageDescription" = "Home File Sync necesita acceder a la red local para encontrar los otros equipos con los que compartes carpetas y sincronizar archivos con ellos.";

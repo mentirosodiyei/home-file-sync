@@ -182,8 +182,16 @@ async fn phone_can_send_files_through_the_qr_link() {
     let port = casa.hub.inbox_port().unwrap();
 
     // La página del enlace se abre (como en el móvil).
-    let page = http(port, &format!("GET /r/{token} HTTP/1.1\r\nHost: x\r\n\r\n"), b"").await;
-    assert!(page.starts_with("HTTP/1.1 200") && page.contains("Enviar archivos a «Mac Casa»"), "{page}");
+    // En el idioma del móvil: castellano, catalán, y si no, inglés.
+    let open = |lang: &'static str| {
+        let head = format!("GET /r/{token} HTTP/1.1\r\nHost: x\r\nAccept-Language: {lang}\r\n\r\n");
+        async move { http(port, &head, b"").await }
+    };
+    let page = open("es-ES,es;q=0.9").await;
+    assert!(page.starts_with("HTTP/1.1 200") && page.contains("Enviar archivos a «Mac Casa»") && page.contains("lang=\"es\""), "{page}");
+    assert!(open("ca-ES").await.contains("Envia fitxers a «Mac Casa»"));
+    let en = open("fr-FR,de;q=0.8").await;
+    assert!(en.contains("Send files to “Mac Casa”") && en.contains("the shared folder “Familia”"), "{en}");
 
     // Subida de una foto con nombre "peligroso".
     let body = b"contenido de la foto";

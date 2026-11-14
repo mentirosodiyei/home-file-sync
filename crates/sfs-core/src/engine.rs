@@ -623,7 +623,7 @@ impl Engine {
                     index.dirty = true;
                 }
             }
-            Err(e) => root_error = Some(format!("No se puede preparar la carpeta: {e}")),
+            Err(e) => root_error = Some(tr!("No se puede preparar la carpeta: {}", e)),
         }
         let (tx, rx) = std::sync::mpsc::channel();
         let ctx = Arc::new(FolderCtx {
@@ -648,7 +648,7 @@ impl Engine {
 
     /// Crea un grupo nuevo y abre el emparejamiento. Devuelve el código.
     pub fn create_group(&self) -> String {
-        let name = format!("Carpeta de {}", self.inner.name());
+        let name = tr!("Carpeta de {}", self.inner.name());
         self.create_group_named(&name)
     }
 
@@ -663,14 +663,14 @@ impl Engine {
         self.inner.save_settings();
         self.inner.disconnect_all();
         self.inner.peers.lock().unwrap().clear();
-        self.inner.event("info", "Grupo nuevo creado".into());
+        self.inner.event("info", tr!("Carpeta compartida creada"));
         self.open_pairing().unwrap_or_default()
     }
 
     /// Muestra un código para añadir equipos al grupo actual.
     pub fn open_pairing(&self) -> Result<String, String> {
         if self.inner.group().is_none() {
-            return Err("Este equipo no pertenece a ningún grupo.".into());
+            return Err(tr!("Este equipo no pertenece a ningún grupo."));
         }
         let code = crate::auth::new_code();
         *self.inner.pairing.lock().unwrap() = Some(Pairing { code: code.clone(), expires: Instant::now() + PAIRING_TTL, failures: 0 });
@@ -686,7 +686,7 @@ impl Engine {
     /// Se une al grupo que está mostrando `code`. Si hay varios grupos
     /// aceptando equipos, `device_id` indica cuál.
     pub async fn join_group(&self, code: &str, device_id: Option<String>) -> Result<(), String> {
-        let code = crate::auth::normalize_code(code).ok_or("El código debe tener 8 cifras.")?;
+        let code = crate::auth::normalize_code(code).ok_or_else(|| tr!("El código debe tener 8 cifras."))?;
         let devices: Vec<(String, String, Vec<Candidate>)> = {
             let nearby = self.inner.nearby.lock().unwrap();
             let open: Vec<&Nearby> = nearby.values().filter(|n| n.advert.pairing).collect();
@@ -695,7 +695,7 @@ impl Engine {
                 None => {
                     let groups: std::collections::HashSet<&str> = open.iter().map(|n| n.advert.group_id.as_str()).collect();
                     if groups.len() > 1 {
-                        return Err("Hay varios grupos aceptando equipos. Elige a cuál unirte.".into());
+                        return Err(tr!("Hay varios grupos aceptando equipos. Elige a cuál unirte."));
                     }
                     open
                 }
@@ -706,7 +706,7 @@ impl Engine {
                 .collect()
         };
         if devices.is_empty() {
-            return Err("No se encuentra ningún equipo mostrando un código. Pulsa «Añadir equipo» en un equipo del grupo y comprueba que ambos están en la misma red. Si la red no permite el descubrimiento, usa «Conexión manual».".into());
+            return Err(tr!("No se encuentra ningún equipo mostrando un código. Pulsa «Invitar equipo» en el otro equipo y comprueba que estáis en la misma red. Si la red no permite el descubrimiento, usa «Conexión manual»."));
         }
         let mut last = None;
         for (name, group_name, cands) in devices {
@@ -726,7 +726,7 @@ impl Engine {
     /// Usa exactamente el mismo emparejamiento y autenticación que la automática.
     /// La dirección solo se guarda si `remember` es verdadero.
     pub async fn join_group_manual(&self, host: &str, port: Option<u16>, code: &str, remember: bool) -> Result<(), String> {
-        let code = crate::auth::normalize_code(code).ok_or("El código debe tener 8 cifras.")?;
+        let code = crate::auth::normalize_code(code).ok_or_else(|| tr!("El código debe tener 8 cifras."))?;
         let (host, port_in_host) = crate::netpath::parse_host(host)?;
         let port = port.or(port_in_host).unwrap_or(DEFAULT_PORT);
         tracing::info!("Unión manual: anfitrión «{host}», puerto TCP {port}");
@@ -734,7 +734,7 @@ impl Engine {
             Ok(c) if !c.is_empty() => c,
             Ok(_) | Err(_) => {
                 tracing::warn!("Unión manual: no se pudo resolver «{host}»");
-                return Err(format!("No se encuentra el equipo «{host}» en la red. Prueba con su dirección IP."));
+                return Err(tr!("No se encuentra el equipo «{}» en la red. Prueba con su dirección IP.", host));
             }
         };
         let (via, remote) = self.join_with(&cands, &code).await.map_err(|e| e.user_message())?;
@@ -753,7 +753,7 @@ impl Engine {
 
     /// Unión con direcciones ya conocidas (las de una invitación descubierta).
     pub async fn join_group_candidates(&self, cands: Vec<Candidate>, code: &str) -> Result<(), String> {
-        let code = crate::auth::normalize_code(code).ok_or("El código debe tener 8 cifras.")?;
+        let code = crate::auth::normalize_code(code).ok_or_else(|| tr!("El código debe tener 8 cifras."))?;
         self.join_with(&cands, &code).await.map(|_| ()).map_err(|e| e.user_message())
     }
 
@@ -821,7 +821,7 @@ impl Engine {
 
     /// Emparejamiento contra una dirección concreta (pruebas y diagnóstico).
     pub async fn join_group_at(&self, addr: SocketAddr, code: &str) -> Result<(), String> {
-        let code = crate::auth::normalize_code(code).ok_or("El código debe tener 8 cifras.")?;
+        let code = crate::auth::normalize_code(code).ok_or_else(|| tr!("El código debe tener 8 cifras."))?;
         self.join_with(&[Candidate { addr, source: AddrSource::Manual }], &code).await.map(|_| ()).map_err(|e| e.user_message())
     }
 
@@ -879,7 +879,7 @@ impl Engine {
         self.inner.disconnect_all();
         self.inner.peers.lock().unwrap().clear();
         self.inner.refresh_advert();
-        self.inner.event("info", format!("Unido a «{}»", group.name));
+        self.inner.event("info", tr!("Unido a «{}»", group.name));
         // Conectamos ya con el equipo que nos ha emparejado, por la misma dirección.
         if via.source == AddrSource::Manual {
             self.connect_to(via.addr);
@@ -904,7 +904,7 @@ impl Engine {
         self.inner.settings.lock().unwrap().manual_peers.clear();
         self.inner.save_settings();
         self.inner.refresh_advert();
-        self.inner.event("info", "Has salido del grupo".into());
+        self.inner.event("info", tr!("Has salido del grupo"));
     }
 
     /// Conecta (y reconecta si se pierde) con una dirección concreta.
@@ -1038,7 +1038,7 @@ fn scanner_thread(inner: Arc<Inner>, ctx: Arc<FolderCtx>, rx: std::sync::mpsc::R
                 "Ha desaparecido la carpeta interna de {}: la carpeta se ha sustituido o el disco se ha desmontado. No se propaga ningún borrado; se vuelve a recibir lo que falte.",
                 ctx.root.display()
             );
-            inner.event("warn", "La carpeta sincronizada ha cambiado por completo (¿disco desconectado?). No se borrará nada en los demás equipos.".into());
+            inner.event("warn", tr!("La carpeta sincronizada ha cambiado por completo (¿disco desconectado?). No se borrará nada en los demás equipos."));
             {
                 let mut idx = ctx.index.lock().unwrap();
                 idx.entries.clear();
@@ -1056,18 +1056,18 @@ fn scanner_thread(inner: Arc<Inner>, ctx: Arc<FolderCtx>, rx: std::sync::mpsc::R
         }
         let root_missing = out.errors.iter().any(|(p, _)| p.is_empty());
         *ctx.root_error.lock().unwrap() =
-            root_missing.then(|| "La carpeta sincronizada no está disponible (¿disco desconectado?).".to_string());
+            root_missing.then(|| tr!("La carpeta sincronizada no está disponible (¿disco desconectado?)."));
         *ctx.scan_errors.lock().unwrap() = out.errors.into_iter().filter(|(p, _)| !p.is_empty()).collect();
         if !out.changed.is_empty() {
             let n = out.changed.len();
             if ctx.scanned_once.load(Ordering::SeqCst) {
-                let text = if n == 1 { format!("Nuevo cambio local: {}", out.changed[0].path) } else { format!("{n} cambios locales detectados") };
+                let text = if n == 1 { tr!("Nuevo cambio local: {}", out.changed[0].path) } else { tr!("{} cambios locales detectados", n) };
                 inner.event("local", text);
             }
             inner.broadcast_entries(out.changed);
         }
         if out.tombstoned > 0 {
-            inner.event("local", format!("{} archivo(s) borrado(s) en este equipo: se eliminan también en los demás (copia en su papelera interna)", out.tombstoned));
+            inner.event("local", tr!("{} archivo(s) borrado(s) en este equipo: se eliminan también en los demás (copia en su papelera interna)", out.tombstoned));
             inner.broadcast_entries(out.tombstones);
         }
         let _ = ctx.index.lock().unwrap().save();
@@ -1405,26 +1405,26 @@ fn build_snapshot(inner: &Inner) -> UiState {
                 let d = dial.get(id);
                 match near {
                     Some(n) if n.advert.group_id == group_id.clone().unwrap_or_default() => match d.and_then(|d| d.error.as_ref().filter(|_| d.fails >= 2)) {
-                        Some(e) => (DeviceState::Error, format!("Detectado pero sin conexión: {e}")),
-                        None => (DeviceState::Connecting, "Conectando…".into()),
+                        Some(e) => (DeviceState::Error, tr!("Detectado pero sin conexión: {}", e)),
+                        None => (DeviceState::Connecting, tr!("Conectando…")),
                     },
                     // Sin anuncios pero con direcciones conocidas: se sigue intentando.
-                    _ if d.is_some_and(|d| d.dialing && d.fails < 2) => (DeviceState::Connecting, "Conectando…".into()),
-                    _ => (DeviceState::Offline, "Desconectado".into()),
+                    _ if d.is_some_and(|d| d.dialing && d.fails < 2) => (DeviceState::Connecting, tr!("Conectando…")),
+                    _ => (DeviceState::Offline, tr!("Desconectado")),
                 }
             } else if !p.index_ready {
-                (DeviceState::Syncing, "Comparando archivos…".into())
+                (DeviceState::Syncing, tr!("Comparando archivos…"))
             } else if p.status.receiving || p.status.pending_files > 0 {
                 (
                     if p.status.receiving { DeviceState::Receiving } else { DeviceState::Syncing },
-                    format!("Recibiendo archivos · faltan {} ({})", p.status.pending_files, human_bytes(p.status.pending_bytes)),
+                    tr!("Recibiendo archivos · faltan {} ({})", p.status.pending_files, human_bytes(p.status.pending_bytes)),
                 )
             } else if p.status.errors > 0 {
-                (DeviceState::Error, format!("{} archivo(s) con error", p.status.errors))
+                (DeviceState::Error, tr!("{} archivo(s) con error", p.status.errors))
             } else if p.status.conflicts > 0 {
-                (DeviceState::Conflict, format!("{} conflicto(s) resuelto(s) conservando ambas copias", p.status.conflicts))
+                (DeviceState::Conflict, tr!("{} conflicto(s) resuelto(s) conservando ambas copias", p.status.conflicts))
             } else {
-                (DeviceState::Synced, "Sincronizado".into())
+                (DeviceState::Synced, tr!("Sincronizado"))
             };
             DeviceView {
                 id: id.clone(),
@@ -1444,8 +1444,8 @@ fn build_snapshot(inner: &Inner) -> UiState {
             let id = &n.advert.device_id;
             if &n.advert.group_id == gid && !known.contains(id) && id != &inner.my_id {
                 let (state, detail) = match dial.get(id).and_then(|d| d.error.as_ref().filter(|_| d.fails >= 2)) {
-                    Some(e) => (DeviceState::Error, format!("Detectado pero sin conexión: {e}")),
-                    None => (DeviceState::Connecting, "Conectando…".into()),
+                    Some(e) => (DeviceState::Error, tr!("Detectado pero sin conexión: {}", e)),
+                    None => (DeviceState::Connecting, tr!("Conectando…")),
                 };
                 devices.push(DeviceView { id: id.clone(), name: n.advert.name.clone(), state, detail, pending_files: 0, pending_bytes: 0, backup: false });
             }
@@ -1472,13 +1472,13 @@ fn build_snapshot(inner: &Inner) -> UiState {
 
     let lnp = inner.lnp_blocked.lock().unwrap().is_some_and(|t| t.elapsed() < Duration::from_secs(120));
     let network_warning = if lnp {
-        Some(crate::netpath::MACOS_LNP_HELP.to_string())
+        Some(crate::netpath::macos_lnp_help())
     } else if !has_lan_ipv4() {
-        Some("Este equipo no tiene conexión a una red local.".to_string())
+        Some(tr!("Este equipo no tiene conexión a una red local."))
     } else if detected_unreachable {
-        Some("Se detectan otros equipos pero no se puede conectar con ellos. Probablemente un cortafuegos o la red bloquea las conexiones directas entre equipos (aislamiento de clientes). Permite Home File Sync en el cortafuegos o usa una red sin aislamiento.".to_string())
+        Some(tr!("Se detectan otros equipos pero no se puede conectar con ellos. Probablemente un cortafuegos o la red bloquea las conexiones directas entre equipos (aislamiento de clientes). Permite Home File Sync en el cortafuegos o usa una red sin aislamiento."))
     } else if group_id.is_some() && !any_connected && !in_group_nearby && now.duration_since(inner.started) > Duration::from_secs(20) {
-        Some("No se detecta ningún otro equipo del grupo. Comprueba que están encendidos, con Home File Sync abierto y en la misma red. Algunas redes wifi aíslan a los clientes y no permiten que los equipos se vean.".to_string())
+        Some(tr!("No se detecta ningún otro equipo del grupo. Comprueba que están encendidos, con Home File Sync abierto y en la misma red. Algunas redes wifi aíslan a los clientes y no permiten que los equipos se vean."))
     } else {
         None
     };

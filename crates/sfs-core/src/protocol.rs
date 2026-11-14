@@ -61,14 +61,14 @@ pub enum RejectReason {
 }
 
 impl RejectReason {
-    pub fn text(&self) -> &'static str {
+    pub fn text(&self) -> String {
         match self {
-            RejectReason::Version => "versión de Home File Sync incompatible",
-            RejectReason::NotInGroup => "el equipo pertenece a otro grupo",
-            RejectReason::BadProof => "credenciales de grupo no válidas",
-            RejectReason::PairingClosed => "el equipo no está aceptando nuevos equipos ahora",
-            RejectReason::PairingFailed => "código incorrecto",
-            RejectReason::PairingLocked => "demasiados intentos fallidos; genera un código nuevo",
+            RejectReason::Version => tr!("versión de Home File Sync incompatible"),
+            RejectReason::NotInGroup => tr!("el equipo pertenece a otro grupo"),
+            RejectReason::BadProof => tr!("credenciales de grupo no válidas"),
+            RejectReason::PairingClosed => tr!("el equipo no está aceptando nuevos equipos ahora"),
+            RejectReason::PairingFailed => tr!("código incorrecto"),
+            RejectReason::PairingLocked => tr!("demasiados intentos fallidos; genera un código nuevo"),
         }
     }
 }

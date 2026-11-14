@@ -8,6 +8,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use sfs_core::hub::{Hub, HubConfig, HubState};
+use sfs_core::tr;
 use sfs_core::settings::ShareMode;
 use sfs_core::status::Overall;
 use std::path::PathBuf;
@@ -32,7 +33,7 @@ fn mode(m: &str) -> ShareMode {
 
 fn path(p: &str) -> Result<PathBuf, String> {
     if p.trim().is_empty() {
-        return Err("Elige una carpeta.".into());
+        return Err(tr!("Elige una carpeta."));
     }
     Ok(PathBuf::from(p))
 }
@@ -50,7 +51,7 @@ async fn get_state(app: State<'_, App>) -> Result<HubState, String> {
 #[tauri::command]
 async fn pick_folder(handle: AppHandle) -> Result<Option<String>, String> {
     let h = handle.clone();
-    let picked = tauri::async_runtime::spawn_blocking(move || h.dialog().file().set_title("Elige la carpeta").blocking_pick_folder())
+    let picked = tauri::async_runtime::spawn_blocking(move || h.dialog().file().set_title(tr!("Elige la carpeta")).blocking_pick_folder())
         .await
         .map_err(|e| e.to_string())?;
     Ok(picked.and_then(|p| p.into_path().ok()).map(|p| p.display().to_string()))
@@ -109,7 +110,7 @@ async fn change_folder(handle: AppHandle, app: State<'_, App>, id: String) -> Re
 
 #[tauri::command]
 async fn open_folder(handle: AppHandle, app: State<'_, App>, id: String) -> Result<(), String> {
-    let folder = app.hub.folder(&id).ok_or("Esa carpeta no está disponible")?;
+    let folder = app.hub.folder(&id).ok_or_else(|| tr!("Esa carpeta no está disponible"))?;
     handle.opener().open_path(folder.display().to_string(), None::<&str>).map_err(|e| e.to_string())
 }
 
@@ -139,6 +140,12 @@ async fn get_network(app: State<'_, App>) -> Result<sfs_core::hub::NetworkView, 
 async fn set_listen_vpn(app: State<'_, App>, on: bool) -> Result<(), String> {
     app.hub.set_listen_vpn(on);
     Ok(())
+}
+
+/// Idioma de la interfaz ("ca", "es" o "en"), según el del sistema.
+#[tauri::command]
+async fn get_lang() -> Result<String, String> {
+    Ok(sfs_core::i18n::lang().code().to_string())
 }
 
 #[tauri::command]
@@ -190,7 +197,7 @@ async fn set_debug_logging(on: bool) -> Result<(), String> {
 async fn export_logs(handle: AppHandle, app: State<'_, App>) -> Result<Option<String>, String> {
     let h = handle.clone();
     let picked = tauri::async_runtime::spawn_blocking(move || {
-        h.dialog().file().set_title("Exportar registro de diagnóstico").set_file_name("HomeFileSync-diagnostico.log").blocking_save_file()
+        h.dialog().file().set_title(tr!("Exportar registro de diagnóstico")).set_file_name("HomeFileSync-diagnostico.log").blocking_save_file()
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -218,7 +225,7 @@ async fn export_logs(handle: AppHandle, app: State<'_, App>) -> Result<Option<St
 
 #[tauri::command]
 async fn open_logs_folder(handle: AppHandle) -> Result<(), String> {
-    let dir = sfs_core::diag::dir().ok_or("El registro en disco no está activo")?;
+    let dir = sfs_core::diag::dir().ok_or_else(|| tr!("El registro en disco no está activo"))?;
     handle.opener().open_path(dir.display().to_string(), None::<&str>).map_err(|e| e.to_string())
 }
 
@@ -247,18 +254,18 @@ fn hide_window(app: &AppHandle) {
 
 fn tooltip(s: &HubState) -> String {
     if s.shares.is_empty() {
-        return "Home File Sync — sin carpetas compartidas".into();
+        return tr!("Home File Sync — sin carpetas compartidas");
     }
     let syncing: u32 = s.shares.iter().map(|x| x.state.pending_files).sum();
     let errors = s.shares.iter().any(|x| x.state.overall == Overall::Error);
     let status = if errors {
-        "hay errores".to_string()
+        tr!("hay errores")
     } else if syncing > 0 {
-        format!("sincronizando · faltan {syncing}")
+        tr!("sincronizando · faltan {}", syncing)
     } else {
-        "todo al día".to_string()
+        tr!("todo al día")
     };
-    format!("Home File Sync — {} carpeta(s) · {status}", s.shares.len())
+    tr!("Home File Sync — {} carpeta(s) · {}", s.shares.len(), status)
 }
 
 /// Icono de la bandeja dibujado en código: dos flechas en círculo.
@@ -299,7 +306,52 @@ fn data_dir(app: &AppHandle) -> PathBuf {
     app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir().join("HomeFileSync"))
 }
 
+/// Menú de la aplicación en macOS, en el idioma de la interfaz (el que trae
+/// Tauri por defecto está en inglés).
+#[cfg(target_os = "macos")]
+fn app_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
+    use tauri::menu::{AboutMetadata, Submenu};
+    let p = |m| PredefinedMenuItem::separator(m);
+    let app_sub = Submenu::with_items(
+        app,
+        "Home File Sync",
+        true,
+        &[
+            &PredefinedMenuItem::about(app, Some(&tr!("Acerca de Home File Sync")), Some(AboutMetadata::default()))?,
+            &p(app)?,
+            &PredefinedMenuItem::hide(app, Some(&tr!("Ocultar Home File Sync")))?,
+            &PredefinedMenuItem::hide_others(app, Some(&tr!("Ocultar otros")))?,
+            &PredefinedMenuItem::show_all(app, Some(&tr!("Mostrar todo")))?,
+            &p(app)?,
+            &PredefinedMenuItem::quit(app, Some(&tr!("Salir de Home File Sync")))?,
+        ],
+    )?;
+    let edit = Submenu::with_items(
+        app,
+        tr!("Edición"),
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, Some(&tr!("Deshacer")))?,
+            &PredefinedMenuItem::redo(app, Some(&tr!("Rehacer")))?,
+            &p(app)?,
+            &PredefinedMenuItem::cut(app, Some(&tr!("Cortar")))?,
+            &PredefinedMenuItem::copy(app, Some(&tr!("Copiar")))?,
+            &PredefinedMenuItem::paste(app, Some(&tr!("Pegar")))?,
+            &PredefinedMenuItem::select_all(app, Some(&tr!("Seleccionar todo")))?,
+        ],
+    )?;
+    let window = Submenu::with_items(
+        app,
+        tr!("Ventana"),
+        true,
+        &[&PredefinedMenuItem::minimize(app, Some(&tr!("Minimizar")))?, &PredefinedMenuItem::close_window(app, Some(&tr!("Cerrar ventana")))?],
+    )?;
+    Menu::with_items(app, &[&app_sub, &edit, &window])
+}
+
 fn main() {
+    // Idioma del sistema: català, castellano o inglés.
+    sfs_core::i18n::set_lang(sfs_core::i18n::system_lang());
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
     use tracing_subscriber::Layer;
@@ -322,8 +374,10 @@ fn main() {
             let hub = tauri::async_runtime::block_on(Hub::start(cfg))?;
             app.manage(App { hub: hub.clone() });
 
-            let open = MenuItem::with_id(app, "open", "Abrir Home File Sync", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Salir (detiene la sincronización)", true, None::<&str>)?;
+            #[cfg(target_os = "macos")]
+            app.set_menu(app_menu(app)?)?;
+            let open = MenuItem::with_id(app, "open", tr!("Abrir Home File Sync"), true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", tr!("Salir (detiene la sincronización)"), true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
             let tray = TrayIconBuilder::with_id("main")
                 .icon(tray_icon())
@@ -387,6 +441,7 @@ fn main() {
             get_network,
             set_listen_vpn,
             app_version,
+            get_lang,
             get_logs,
             logs_text,
             set_debug_logging,

@@ -26,6 +26,7 @@ fs4 = "0.13"
 walkdir = "2"
 hex = "0.4"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+sys-locale = "0.3"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 thiserror = "1"
 tracing = "0.1"

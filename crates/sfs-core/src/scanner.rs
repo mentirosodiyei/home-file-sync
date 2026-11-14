@@ -180,7 +180,7 @@ impl Scanner {
     pub fn scan(&mut self, index: &Mutex<LocalIndex>, me: &Me) -> ScanOutcome {
         let mut out = ScanOutcome::default();
         if !self.root.is_dir() {
-            out.errors.push((String::new(), "La carpeta sincronizada no está disponible".into()));
+            out.errors.push((String::new(), tr!("La carpeta sincronizada no está disponible")));
             return out;
         }
         if !self.root.join(META_DIR).is_dir() {
@@ -196,7 +196,7 @@ impl Scanner {
             let mut seen = HashSet::new();
             for f in files {
                 if !seen.insert(f.key.clone()) {
-                    out.errors.push((f.rel.clone(), "existe otro archivo con el mismo nombre (solo cambian mayúsculas)".into()));
+                    out.errors.push((f.rel.clone(), tr!("existe otro archivo con el mismo nombre (solo cambian mayúsculas)")));
                     continue;
                 }
                 let unchanged = idx.get(&f.key).is_some_and(|le| {
@@ -259,7 +259,7 @@ impl Scanner {
                 }
                 Err(e) => {
                     out.unstable = true;
-                    out.errors.push((f.rel.clone(), format!("no se puede leer: {e}")));
+                    out.errors.push((f.rel.clone(), tr!("no se puede leer: {}", e)));
                 }
             }
         }

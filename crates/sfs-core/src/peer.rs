@@ -24,8 +24,8 @@ const PING_EVERY: Duration = Duration::from_secs(10);
 
 fn io_text(e: std::io::Error) -> String {
     match e.kind() {
-        std::io::ErrorKind::ConnectionRefused => "conexión rechazada".into(),
-        std::io::ErrorKind::TimedOut => "tiempo de espera agotado".into(),
+        std::io::ErrorKind::ConnectionRefused => tr!("conexión rechazada"),
+        std::io::ErrorKind::TimedOut => tr!("tiempo de espera agotado"),
         _ => e.to_string(),
     }
 }
@@ -34,7 +34,7 @@ async fn recv_timeout(r: &mut SecureReader, d: Duration) -> Result<Msg, String> 
     match timeout(d, r.recv()).await {
         Ok(Ok(m)) => Ok(m),
         Ok(Err(e)) => Err(io_text(e)),
-        Err(_) => Err("tiempo de espera agotado".into()),
+        Err(_) => Err(tr!("tiempo de espera agotado")),
     }
 }
 
@@ -95,7 +95,7 @@ async fn open_secure(inner: &Inner, cands: &[Candidate], purpose: &str, quiet: b
         match timeout(HANDSHAKE_TIMEOUT, handshake(stream, &inner.private_key, true)).await {
             Ok(Ok(hs)) if device_id(&hs.remote_static) == inner.my_id => {
                 tracing::info!("{} es este mismo equipo; se descarta", c.addr);
-                attempts.push(later_failure(&c, &ifs, Phase::Encryption, "es este mismo equipo", None));
+                attempts.push(later_failure(&c, &ifs, Phase::Encryption, tr!("es este mismo equipo"), None));
             }
             Ok(Ok(hs)) => return Ok((hs, c, attempts)),
             Ok(Err(e)) => {
@@ -104,7 +104,7 @@ async fn open_secure(inner: &Inner, cands: &[Candidate], purpose: &str, quiet: b
                 attempts.push(a);
             }
             Err(_) => {
-                let a = later_failure(&c, &ifs, Phase::Encryption, "sin respuesta al cifrado (¿es Home File Sync?)", None);
+                let a = later_failure(&c, &ifs, Phase::Encryption, tr!("sin respuesta al cifrado (¿es Home File Sync?)"), None);
                 tracing::warn!("Fallo tras conectar: {a}");
                 attempts.push(a);
             }
@@ -126,7 +126,7 @@ fn phase_err(c: &Candidate, phase: Phase, detail: impl Into<String>, os: Option<
 /// Devuelve el id del equipo en cuanto la sesión queda establecida.
 /// Con `quiet`, los reintentos periódicos se registran a nivel DEBUG.
 pub(crate) async fn dial(inner: Arc<Inner>, cands: &[Candidate], quiet: bool) -> Result<String, LinkError> {
-    let group = inner.group().ok_or_else(|| LinkError::Rejected("Este equipo no pertenece a ningún grupo.".into(), vec![]))?;
+    let group = inner.group().ok_or_else(|| LinkError::Rejected(tr!("Este equipo no pertenece a ningún grupo."), vec![]))?;
     let (mut hs, c, mut attempts) = open_secure(&inner, cands, "Conexión de sincronización", quiet).await.map_err(LinkError::Network)?;
     let remote = device_id(&hs.remote_static);
     if inner.peers.lock().unwrap().get(&remote).is_some_and(|p| p.conn.is_some()) {
@@ -141,8 +141,8 @@ pub(crate) async fn dial(inner: Arc<Inner>, cands: &[Candidate], quiet: bool) ->
     match recv_timeout(&mut hs.reader, HANDSHAKE_TIMEOUT).await {
         Ok(Msg::Welcome { name, proof }) => {
             if !ct_eq(&proof, &group_proof(&key, "server", &hs.handshake_hash)) {
-                attempts.push(phase_err(&c, Phase::Auth, "el otro equipo no ha demostrado pertenecer al grupo", None));
-                return Err(LinkError::Rejected("El otro equipo no ha demostrado pertenecer al grupo.".into(), attempts));
+                attempts.push(phase_err(&c, Phase::Auth, tr!("el otro equipo no ha demostrado pertenecer al grupo"), None));
+                return Err(LinkError::Rejected(tr!("El otro equipo no ha demostrado pertenecer al grupo."), attempts));
             }
             tracing::info!("Autenticado con «{name}» ({}) en {}", &remote[..8], c.addr);
             // La dirección que ha funcionado se recuerda para reconectar sin
@@ -156,10 +156,10 @@ pub(crate) async fn dial(inner: Arc<Inner>, cands: &[Candidate], quiet: bool) ->
         }
         Ok(Msg::Reject { reason }) => {
             attempts.push(phase_err(&c, Phase::Auth, reason.text(), None));
-            Err(LinkError::Rejected(capitalize(reason.text()), attempts))
+            Err(LinkError::Rejected(capitalize(&reason.text()), attempts))
         }
         Ok(_) => {
-            attempts.push(phase_err(&c, Phase::Auth, "respuesta inesperada", None));
+            attempts.push(phase_err(&c, Phase::Auth, tr!("respuesta inesperada"), None));
             Err(LinkError::Network(attempts))
         }
         Err(e) => {
@@ -188,9 +188,9 @@ pub(crate) async fn pair_as_joiner(inner: &Arc<Inner>, cands: &[Candidate], code
     }
     match recv_timeout(&mut hs.reader, Duration::from_secs(20)).await {
         Ok(Msg::PairReply { spake, confirm }) => {
-            let Some(key) = state.finish(&spake) else { return Err(rejected(attempts, "Código incorrecto.".into())) };
+            let Some(key) = state.finish(&spake) else { return Err(rejected(attempts, tr!("Código incorrecto."))) };
             if !ct_eq(&confirm, &pair_confirm(&key, "member", &hs.handshake_hash)) {
-                return Err(rejected(attempts, "Código incorrecto.".into()));
+                return Err(rejected(attempts, tr!("Código incorrecto.")));
             }
             if let Err(e) = hs.writer.send(&Msg::PairConfirm { confirm: pair_confirm(&key, "joiner", &hs.handshake_hash) }).await {
                 return Err(net(attempts, e.to_string()));
@@ -201,13 +201,13 @@ pub(crate) async fn pair_as_joiner(inner: &Arc<Inner>, cands: &[Candidate], code
                     attempts.clear();
                     Ok((Group { id: group_id, name: group_name, key: hex::encode(group_key) }, c, remote))
                 }
-                Ok(Msg::Reject { reason }) => Err(rejected(attempts, capitalize(reason.text()))),
-                Ok(_) => Err(net(attempts, "respuesta inesperada".into())),
+                Ok(Msg::Reject { reason }) => Err(rejected(attempts, capitalize(&reason.text()))),
+                Ok(_) => Err(net(attempts, tr!("respuesta inesperada"))),
                 Err(e) => Err(net(attempts, e)),
             }
         }
-        Ok(Msg::Reject { reason }) => Err(rejected(attempts, capitalize(reason.text()))),
-        Ok(_) => Err(net(attempts, "respuesta inesperada".into())),
+        Ok(Msg::Reject { reason }) => Err(rejected(attempts, capitalize(&reason.text()))),
+        Ok(_) => Err(net(attempts, tr!("respuesta inesperada"))),
         Err(e) => Err(net(attempts, e)),
     }
 }
@@ -329,7 +329,7 @@ async fn pair_as_member(inner: Arc<Inner>, mut hs: Handshaken, proto: u32, name:
                 .send(&Msg::PairGroup { group_id: group.id.clone(), group_name: group.name.clone(), group_key: group.key_bytes().to_vec() })
                 .await
                 .map_err(io_text)?;
-            inner.event("info", format!("{name} se ha unido al grupo"));
+            inner.event("info", tr!("{} se ha unido al grupo", name));
             // Esperamos a que el otro lado cierre para no cortar el último mensaje.
             let _ = timeout(Duration::from_secs(5), hs.reader.recv()).await;
             Ok(())
@@ -338,7 +338,7 @@ async fn pair_as_member(inner: Arc<Inner>, mut hs: Handshaken, proto: u32, name:
             fail(&inner);
             inner.refresh_advert();
             let _ = hs.writer.send(&reject(RejectReason::PairingFailed)).await;
-            inner.event("warn", format!("Intento de emparejamiento fallido desde «{name}»"));
+            inner.event("warn", tr!("Intento de emparejamiento fallido desde «{}»", name));
             Err("código incorrecto".into())
         }
     }
@@ -413,7 +413,7 @@ pub(crate) async fn run_session(inner: Arc<Inner>, hs: Handshaken, remote: Strin
     if !register(&inner, &remote, &name, handle.clone()) {
         return;
     }
-    inner.event("net", format!("Conectado con {name}"));
+    inner.event("net", tr!("Conectado con {}", name));
     let gid = inner.group().map(|g| g.id).unwrap_or_default();
     if !inner.nearby.lock().unwrap().contains_key(&crate::engine::nkey(&remote, &gid)) {
         tracing::info!(
@@ -454,7 +454,7 @@ pub(crate) async fn run_session(inner: Arc<Inner>, hs: Handshaken, remote: Strin
     handle.routes.lock().unwrap().clear();
     unregister(&inner, &remote, conn_id);
     if !inner.shutting_down.load(Ordering::SeqCst) {
-        inner.event("net", format!("Desconectado de {name}"));
+        inner.event("net", tr!("Desconectado de {}", name));
     }
     inner.wake.notify_one();
 }

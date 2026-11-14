@@ -1719,7 +1719,7 @@ dependencies = [
 
 [[package]]
 name = "home-file-sync"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -3627,7 +3627,7 @@ dependencies = [
 
 [[package]]
 name = "sfs-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde_json",
  "sfs-core",
@@ -3637,7 +3637,7 @@ dependencies = [
 
 [[package]]
 name = "sfs-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "blake3",
  "chrono",
@@ -3656,6 +3656,7 @@ dependencies = [
  "snow",
  "socket2 0.5.10",
  "spake2",
+ "sys-locale",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -3940,6 +3941,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "sys-locale"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

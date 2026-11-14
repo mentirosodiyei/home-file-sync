@@ -279,20 +279,20 @@ fn plan(inner: &Inner, folder: &FolderCtx) -> (Vec<Need>, Vec<Need>) {
 fn apply_delete(inner: &Inner, folder: &FolderCtx, need: &Need) -> Result<FileEntry, String> {
     let root = &folder.root;
     let mut idx = folder.index.lock().unwrap();
-    let cur = idx.get(&need.key).cloned().ok_or("ya no está en el índice")?;
+    let cur = idx.get(&need.key).cloned().ok_or_else(|| tr!("ya no está en el índice"))?;
     if decide(Some(&cur.entry), &need.remote) != Action::Delete {
-        return Err("el estado local cambió".into());
+        return Err(tr!("el estado local cambió"));
     }
     let m = std::fs::metadata(to_local(root, &cur.disk)).ok();
     if m.as_ref().map(|m| (m.len(), crate::scanner::mtime_ns(m))) != Some((cur.disk_size, cur.disk_mtime_ns)) {
         folder.request_scan();
-        return Err("el archivo se ha modificado aquí; se conserva".into());
+        return Err(tr!("el archivo se ha modificado aquí; se conserva"));
     }
     let trashed = fsops::move_to_trash(root, &cur.disk).map_err(|e| {
         if is_locked(&e) {
-            "el archivo está abierto en otra aplicación; se eliminará cuando se cierre".to_string()
+            tr!("el archivo está abierto en otra aplicación; se eliminará cuando se cierre")
         } else {
-            format!("no se puede eliminar: {e}")
+            tr!("no se puede eliminar: {}", e)
         }
     })?;
     fsops::remove_empty_parents(root, &cur.disk);
@@ -336,7 +336,7 @@ pub(crate) async fn scheduler_loop(inner: Arc<Inner>) {
             let (i, f, dd) = (inner.clone(), folder.clone(), d.clone());
             match tokio::task::spawn_blocking(move || apply_delete(&i, &f, &dd)).await {
                 Ok(Ok(entry)) => {
-                    inner.event("delete", format!("Eliminado {} (borrado en «{}»; copia en la papelera interna)", d.remote.path, d.remote.modified_by));
+                    inner.event("delete", tr!("Eliminado {} (borrado en «{}»; copia en la papelera interna)", d.remote.path, d.remote.modified_by));
                     done.push(entry);
                 }
                 Ok(Err(msg)) => set_error(&inner, &d, msg, Duration::from_secs(10), true),
@@ -445,16 +445,16 @@ async fn download_job(inner: Arc<Inner>, folder: Arc<FolderCtx>, need: Need) {
                     a.conflicts += 1;
                     a.event(
                         "conflict",
-                        format!("Conflicto en «{}»: se ha recibido la versión más reciente y la de este equipo se conserva como «{copy}»", need.remote.path),
+                        tr!("Conflicto en «{}»: se ha recibido la versión más reciente y la de este equipo se conserva como «{}»", need.remote.path, copy),
                     );
                 }
-                None => a.event("recv", format!("Recibido {}", need.remote.path)),
+                None => a.event("recv", tr!("Recibido {}", need.remote.path)),
             }
         }
-        Err(DlError::Busy) => set_error(&inner, &need, "esperando a un equipo libre".into(), Duration::from_millis(1500), false),
+        Err(DlError::Busy) => set_error(&inner, &need, tr!("esperando a un equipo libre"), Duration::from_millis(1500), false),
         Err(DlError::Stale) => {
             folder.request_scan();
-            set_error(&inner, &need, "cambió en este equipo; se vuelve a evaluar".into(), Duration::from_secs(3), false);
+            set_error(&inner, &need, tr!("cambió en este equipo; se vuelve a evaluar"), Duration::from_secs(3), false);
         }
         Err(DlError::Fail(msg)) => {
             tracing::warn!("Descarga de «{}» fallida: {msg}", need.remote.path);
@@ -513,7 +513,7 @@ async fn download(inner: &Arc<Inner>, folder: &Arc<FolderCtx>, need: &Need, tid:
         let remaining = need.remote.size.saturating_sub(already);
         if let Some(free) = fsops::available_space(&folder.root) {
             if free < remaining + 64 * 1024 * 1024 {
-                return Err(DlError::Fail("no hay espacio suficiente en el disco".into()));
+                return Err(DlError::Fail(tr!("no hay espacio suficiente en el disco")));
             }
         }
         // Fuentes ordenadas por carga (menos subidas en curso primero).
@@ -555,7 +555,7 @@ async fn download(inner: &Arc<Inner>, folder: &Arc<FolderCtx>, need: &Need, tid:
         _ => {
             let _ = std::fs::remove_file(&temp);
             inner.stats.lock().unwrap().hash_failures += 1;
-            return Err(DlError::Fail("los datos recibidos no superan la verificación; se descargará de nuevo".into()));
+            return Err(DlError::Fail(tr!("los datos recibidos no superan la verificación; se descargará de nuevo")));
         }
     }
 
@@ -587,7 +587,7 @@ async fn fetch(inner: &Arc<Inner>, conn: ConnHandle, need: &Need, temp: &std::pa
         }
     }
     let _route = Route(conn.clone(), id);
-    let lost = || DlError::Fail("conexión perdida".into());
+    let lost = || DlError::Fail(tr!("conexión perdida"));
 
     conn.ctrl.send(Msg::DlOpen { id, path: need.remote.path.clone(), hash: need.remote.hash.clone() }).map_err(|_| lost())?;
     let size = match timeout(Duration::from_secs(20), rx.recv()).await {
@@ -623,9 +623,9 @@ async fn fetch(inner: &Arc<Inner>, conn: ConnHandle, need: &Need, temp: &std::pa
         match timeout(Duration::from_secs(30), rx.recv()).await {
             Ok(Some(Msg::Block { offset: o, data, .. })) => {
                 if o != offset || data.is_empty() || o + data.len() as u64 > size {
-                    return Err(DlError::Fail("bloque inesperado".into()));
+                    return Err(DlError::Fail(tr!("bloque inesperado")));
                 }
-                file.write_all(&data).await.map_err(|e| DlError::Fail(format!("error de escritura: {e}")))?;
+                file.write_all(&data).await.map_err(|e| DlError::Fail(tr!("error de escritura: {}", e)))?;
                 offset += data.len() as u64;
                 inflight -= 1;
                 inner.stats.lock().unwrap().bytes_down += data.len() as u64;
@@ -682,9 +682,9 @@ fn place(inner: &Inner, folder: &FolderCtx, need: &Need, temp: &std::path::Path)
     let mut conflict = None;
     let fail = |e: std::io::Error| {
         if is_locked(&e) {
-            DlError::Fail("el archivo está abierto en otra aplicación; se actualizará cuando se cierre".into())
+            DlError::Fail(tr!("el archivo está abierto en otra aplicación; se actualizará cuando se cierre"))
         } else {
-            DlError::Fail(format!("no se puede colocar el archivo: {e}"))
+            DlError::Fail(tr!("no se puede colocar el archivo: {}", e))
         }
     };
 

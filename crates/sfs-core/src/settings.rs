@@ -32,7 +32,7 @@ pub struct Group {
 
 impl Group {
     pub fn create(device_name: &str) -> Self {
-        Self::create_named(&format!("Carpeta de {device_name}"))
+        Self::create_named(&tr!("Carpeta de {}", device_name))
     }
 
     pub fn create_named(name: &str) -> Self {
@@ -153,22 +153,22 @@ pub fn default_device_name() -> String {
 /// Valida la carpeta elegida por el usuario. Rechaza carpetas peligrosas
 /// (raíz, carpeta de usuario completa, carpetas del sistema).
 pub fn check_folder(path: &Path) -> Result<PathBuf, String> {
-    let canon = std::fs::canonicalize(path).map_err(|e| format!("No se puede abrir la carpeta: {e}"))?;
+    let canon = std::fs::canonicalize(path).map_err(|e| tr!("No se puede abrir la carpeta: {}", e))?;
     // Windows devuelve rutas "\\?\C:\...": las simplificamos si es posible.
     let canon = match canon.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
         Some(s) if s.as_bytes().get(1) == Some(&b':') => PathBuf::from(s),
         _ => canon,
     };
     if !canon.is_dir() {
-        return Err("La ruta elegida no es una carpeta.".into());
+        return Err(tr!("La ruta elegida no es una carpeta."));
     }
     if canon.parent().is_none() {
-        return Err("No se puede sincronizar la raíz del disco. Elige o crea una carpeta concreta.".into());
+        return Err(tr!("No se puede sincronizar la raíz del disco. Elige o crea una carpeta concreta."));
     }
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from);
     if let Some(home) = home.and_then(|h| std::fs::canonicalize(h).ok()) {
         if canon == home {
-            return Err("No se puede sincronizar la carpeta de usuario completa. Elige o crea una carpeta concreta.".into());
+            return Err(tr!("No se puede sincronizar la carpeta de usuario completa. Elige o crea una carpeta concreta."));
         }
     }
     let lower = canon.to_string_lossy().to_lowercase().replace('\\', "/");
@@ -179,10 +179,10 @@ pub fn check_folder(path: &Path) -> Result<PathBuf, String> {
         "/program files", "/program files (x86)", "/programdata",
     ];
     if forbidden.iter().any(|f| rest == *f || rest.starts_with(&format!("{f}/"))) {
-        return Err("No se puede sincronizar una carpeta del sistema.".into());
+        return Err(tr!("No se puede sincronizar una carpeta del sistema."));
     }
     let probe = canon.join(".homefilesync-probe");
-    std::fs::write(&probe, b"ok").map_err(|e| format!("No se puede escribir en la carpeta: {e}"))?;
+    std::fs::write(&probe, b"ok").map_err(|e| tr!("No se puede escribir en la carpeta: {}", e))?;
     let _ = std::fs::remove_file(&probe);
     Ok(canon)
 }

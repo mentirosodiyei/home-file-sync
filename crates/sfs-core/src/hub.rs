@@ -309,7 +309,7 @@ impl Hub {
             }
             if let Some(other) = e.folder() {
                 if canon.starts_with(&other) || other.starts_with(&canon) {
-                    return Err(format!("Esa carpeta coincide o está dentro de otra carpeta compartida ({}). Elige otra.", other.display()));
+                    return Err(tr!("Esa carpeta coincide o está dentro de otra carpeta compartida ({}). Elige otra.", other.display()));
                 }
             }
         }
@@ -347,7 +347,7 @@ impl Hub {
     pub async fn create_share(&self, name: &str, folder: &Path, mode: ShareMode) -> Result<(String, String), String> {
         let name = name.trim();
         if name.is_empty() {
-            return Err("Ponle un nombre a la carpeta compartida.".into());
+            return Err(tr!("Ponle un nombre a la carpeta compartida."));
         }
         let (id, engine) = self.prepare(folder, mode).await?;
         let code = engine.create_group_named(name);
@@ -387,13 +387,13 @@ impl Hub {
             None => {
                 let groups: std::collections::HashSet<&str> = open.iter().map(|i| i.group_id.as_str()).collect();
                 if groups.len() > 1 {
-                    return Err("Hay varias carpetas aceptando equipos. Elige a cuál unirte.".into());
+                    return Err(tr!("Hay varias carpetas aceptando equipos. Elige a cuál unirte."));
                 }
                 open.first().cloned()
             }
         };
         let Some(inv) = chosen else {
-            return Err("No se encuentra ninguna carpeta compartida esperando equipos. Pulsa «Invitar» en el otro equipo y comprueba que estáis en la misma red. Si la red no permite el descubrimiento, usa «Conexión manual».".into());
+            return Err(tr!("No se encuentra ninguna carpeta compartida esperando equipos. Pulsa «Invitar» en el otro equipo y comprueba que estáis en la misma red. Si la red no permite el descubrimiento, usa «Conexión manual»."));
         };
         let cands: Vec<Candidate> = self.inner.invites.lock().unwrap().get(&inv.key).map(|i| i.addrs.clone()).unwrap_or_default();
         let (id, engine) = self.prepare(folder, mode).await?;
@@ -440,7 +440,7 @@ impl Hub {
     }
 
     fn engine(&self, id: &str) -> Result<Engine, String> {
-        self.inner.shares.lock().unwrap().get(id).cloned().ok_or_else(|| "Esa carpeta compartida ya no existe.".to_string())
+        self.inner.shares.lock().unwrap().get(id).cloned().ok_or_else(|| tr!("Esa carpeta compartida ya no existe."))
     }
 
     /// Motor de una carpeta compartida (para pruebas y diagnóstico).
@@ -576,26 +576,26 @@ impl Hub {
             return d.clone();
         }
         let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-        home.join("Downloads").join("Recibidos Home File Sync")
+        home.join("Downloads").join(tr!("Recibidos Home File Sync"))
     }
 
     /// Abre la recepción: en una carpeta compartida (`Some(id)`) o en la de recibidos.
     pub fn start_receive(&self, share: Option<&str>) -> Result<ReceiveView, String> {
-        let inbox = self.inner.inbox.as_ref().ok_or("La recepción por navegador no está disponible en este equipo.")?;
-        let (dest, temp, label) = match share {
+        let inbox = self.inner.inbox.as_ref().ok_or_else(|| tr!("La recepción por navegador no está disponible en este equipo."))?;
+        let (dest, temp, label, share_name) = match share {
             Some(id) => {
                 let e = self.engine(id)?;
-                let root = e.folder().ok_or("Esa carpeta compartida no tiene carpeta local.")?;
+                let root = e.folder().ok_or_else(|| tr!("Esa carpeta compartida no tiene carpeta local."))?;
                 let name = e.snapshot().group.map(|g| g.name).unwrap_or_default();
-                (root.clone(), crate::fsops::meta_dir(&root).join("tmp"), format!("la carpeta compartida «{name}»"))
+                (root.clone(), crate::fsops::meta_dir(&root).join("tmp"), tr!("la carpeta compartida «{}»", name), Some(name))
             }
             None => {
                 let d = self.default_received_dir();
                 let t = d.join(".recibiendo");
-                (d.clone(), t, format!("la carpeta {}", d.display()))
+                (d.clone(), t, tr!("la carpeta {}", d.display()), None)
             }
         };
-        inbox.open(&dest, &temp, &label, crate::inbox::DEFAULT_TTL).map_err(io_err)
+        inbox.open(&dest, &temp, &label, share_name.as_deref(), crate::inbox::DEFAULT_TTL).map_err(io_err)
     }
 
     pub fn stop_receive(&self) {

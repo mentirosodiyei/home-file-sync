@@ -54,6 +54,8 @@ struct Session {
     /// Carpeta para los temporales (en el mismo volumen que el destino).
     temp_dir: PathBuf,
     label: String,
+    /// Nombre de la carpeta compartida (o None si es una carpeta normal).
+    share: Option<String>,
     expires: Instant,
     received: Vec<ReceivedView>,
 }
@@ -110,7 +112,9 @@ impl Inbox {
     }
 
     /// Abre una sesión de recepción hacia `dest`. Sustituye a la anterior.
-    pub fn open(&self, dest: &Path, temp_dir: &Path, label: &str, ttl: Duration) -> std::io::Result<ReceiveView> {
+    /// `share`: nombre de la carpeta compartida de destino, si lo es (para
+    /// describirla en el idioma del móvil que abre el enlace).
+    pub fn open(&self, dest: &Path, temp_dir: &Path, label: &str, share: Option<&str>, ttl: Duration) -> std::io::Result<ReceiveView> {
         std::fs::create_dir_all(dest)?;
         std::fs::create_dir_all(temp_dir)?;
         let token = hex::encode(crate::auth::random_bytes::<16>());
@@ -119,6 +123,7 @@ impl Inbox {
             dest: dest.to_path_buf(),
             temp_dir: temp_dir.to_path_buf(),
             label: label.into(),
+            share: share.map(str::to_string),
             expires: Instant::now() + ttl,
             received: Vec::new(),
         });
@@ -158,12 +163,14 @@ impl Inbox {
         let mut parts = request.split(' ');
         let (method, target) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
         let mut content_length: Option<u64> = None;
+        let mut lang = crate::i18n::Lang::En;
         let mut chunked = false;
         for l in lines {
             if let Some((k, v)) = l.split_once(':') {
                 match k.trim().to_ascii_lowercase().as_str() {
                     "content-length" => content_length = v.trim().parse().ok(),
                     "transfer-encoding" => chunked = v.to_ascii_lowercase().contains("chunked"),
+                    "accept-language" => lang = crate::i18n::Lang::from_accept_language(v),
                     _ => {}
                 }
             }
@@ -172,12 +179,13 @@ impl Inbox {
         let segs: Vec<&str> = path.trim_start_matches('/').split('/').collect();
         match (method, segs.as_slice()) {
             ("GET", ["r", token]) => match self.check(token) {
-                Ok((label, device)) => respond(&mut stream, 200, "text/html; charset=utf-8", page(&label, &device).as_bytes()).await,
-                Err(code) => respond(&mut stream, code, "text/html; charset=utf-8", error_page(code).as_bytes()).await,
+                Ok((dest, device)) => respond(&mut stream, 200, "text/html; charset=utf-8", page(lang, &dest.describe(lang), &device).as_bytes()).await,
+                Err(code) => respond(&mut stream, code, "text/html; charset=utf-8", error_page(lang, code).as_bytes()).await,
             },
             ("POST", ["r", token, "upload"]) => {
                 if let Err(code) = self.check(token) {
-                    return respond(&mut stream, code, "application/json", br#"{"ok":false,"error":"Enlace caducado o no valido"}"#).await;
+                    let body = serde_json::json!({"ok": false, "error": tr_in!(lang, "Enlace caducado o no válido")}).to_string();
+                    return respond(&mut stream, code, "application/json", body.as_bytes()).await;
                 }
                 if chunked || content_length.is_none() {
                     return respond(&mut stream, 411, "application/json", br#"{"ok":false,"error":"Falta Content-Length"}"#).await;
@@ -188,7 +196,7 @@ impl Inbox {
                     .map(percent_decode)
                     .map(|n| sanitize_name(&n))
                     .unwrap_or_else(|| "archivo".into());
-                match self.receive(token, &name, content_length.unwrap(), rest, &mut stream).await {
+                match self.receive(lang, token, &name, content_length.unwrap(), rest, &mut stream).await {
                     Ok((saved, size)) => {
                         let body = serde_json::json!({"ok": true, "name": saved, "size": size}).to_string();
                         respond(&mut stream, 200, "application/json", body.as_bytes()).await
@@ -205,29 +213,29 @@ impl Inbox {
     }
 
     /// Comprueba el token: Ok((destino, nombre del equipo)) o código HTTP.
-    fn check(&self, token: &str) -> Result<(String, String), u16> {
+    fn check(&self, token: &str) -> Result<(Dest, String), u16> {
         let st = self.state.lock().unwrap();
         match &st.session {
             Some(s) if crate::auth::ct_eq(s.token.as_bytes(), token.as_bytes()) => {
                 if s.expires <= Instant::now() {
                     Err(410)
                 } else {
-                    Ok((s.label.clone(), st.device_name.clone()))
+                    Ok((Dest { share: s.share.clone(), path: s.dest.display().to_string() }, st.device_name.clone()))
                 }
             }
             _ => Err(404),
         }
     }
 
-    async fn receive(&self, token: &str, name: &str, len: u64, already: Vec<u8>, stream: &mut TcpStream) -> std::io::Result<(String, u64)> {
+    async fn receive(&self, lang: crate::i18n::Lang, token: &str, name: &str, len: u64, already: Vec<u8>, stream: &mut TcpStream) -> std::io::Result<(String, u64)> {
         let (dest, temp_dir) = {
             let st = self.state.lock().unwrap();
-            let s = st.session.as_ref().filter(|s| s.token == token).ok_or_else(|| std::io::Error::other("sesión cerrada"))?;
+            let s = st.session.as_ref().filter(|s| s.token == token).ok_or_else(|| std::io::Error::other(tr_in!(lang, "Enlace caducado o no válido")))?;
             (s.dest.clone(), s.temp_dir.clone())
         };
         if let Some(free) = crate::fsops::available_space(&dest) {
             if free < len + 64 * 1024 * 1024 {
-                return Err(std::io::Error::other("no hay espacio suficiente en el disco"));
+                return Err(std::io::Error::other(tr_in!(lang, "no hay espacio suficiente en el disco")));
             }
         }
         let temp = temp_dir.join(format!("upload-{}.tmp", hex::encode(crate::auth::random_bytes::<8>())));
@@ -242,9 +250,9 @@ impl Inbox {
                 let want = buf.len().min((len - written) as usize);
                 let n = tokio::time::timeout(IDLE, stream.read(&mut buf[..want]))
                     .await
-                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "la subida se ha detenido"))??;
+                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, tr_in!(lang, "la subida se ha detenido")))??;
                 if n == 0 {
-                    return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "subida interrumpida"));
+                    return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, tr_in!(lang, "subida interrumpida")));
                 }
                 f.write_all(&buf[..n]).await?;
                 written += n as u64;
@@ -289,7 +297,7 @@ fn place_unique(temp: &Path, dest: &Path, name: &str) -> std::io::Result<String>
             }
         }
     }
-    Err(std::io::Error::other("demasiados archivos con el mismo nombre"))
+    Err(std::io::Error::other(tr!("demasiados archivos con el mismo nombre")))
 }
 
 /// Limpia un nombre de archivo recibido: solo el nombre (sin carpetas),
@@ -408,16 +416,57 @@ fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-fn error_page(code: u16) -> String {
-    let msg = if code == 410 { "Este enlace ha caducado." } else { "Este enlace no es válido." };
+/// Destino de la sesión, para describirlo en el idioma de quien abre el enlace.
+struct Dest {
+    share: Option<String>,
+    path: String,
+}
+
+impl Dest {
+    fn describe(&self, l: crate::i18n::Lang) -> String {
+        match &self.share {
+            Some(n) => tr_in!(l, "la carpeta compartida «{}»", n),
+            None => tr_in!(l, "la carpeta {}", self.path),
+        }
+    }
+}
+
+fn error_page(l: crate::i18n::Lang, code: u16) -> String {
+    let msg = if code == 410 { tr_in!(l, "Este enlace ha caducado.") } else { tr_in!(l, "Este enlace no es válido.") };
     format!(
-        "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Home File Sync</title>\
-         <body style='font:16px system-ui;margin:40px 20px;text-align:center'><h2>{msg}</h2><p>Pide que vuelvan a mostrar el código QR en Home File Sync.</p>"
+        "<!doctype html><html lang='{}'><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Home File Sync</title>\
+         <body style='font:16px system-ui;margin:40px 20px;text-align:center'><h2>{}</h2><p>{}</p>",
+        l.code(),
+        esc(&msg),
+        esc(&tr_in!(l, "Pide que vuelvan a mostrar el código QR en Home File Sync."))
     )
 }
 
-fn page(label: &str, device: &str) -> String {
-    include_str!("inbox_page.html").replace("{{DEVICE}}", &esc(device)).replace("{{DEST}}", &esc(label))
+/// Página del móvil en su idioma. Los textos de la parte en JavaScript van en un objeto JSON.
+fn page(l: crate::i18n::Lang, dest: &str, device: &str) -> String {
+    let js = serde_json::json!({
+        "waiting": tr_in!(l, "En espera"),
+        "sending": tr_in!(l, "Enviando…"),
+        "sent": tr_in!(l, "Enviado ✓"),
+        "as": tr_in!(l, " como «{}»"),
+        "noconn": tr_in!(l, "Sin conexión con el equipo"),
+    });
+    include_str!("inbox_page.html")
+        .replace("{{LANG}}", l.code())
+        .replace("{{TITLE}}", &esc(&tr_in!(l, "Enviar a {}", device)))
+        .replace("{{H1}}", &esc(&tr_in!(l, "Enviar archivos a «{}»", device)))
+        .replace("{{SUB}}", &tr_in!(l, "Se guardarán en <b>{}</b>. No hace falta instalar nada.", esc(dest)))
+        .replace("{{CHOOSE}}", &esc(&tr_in!(l, "Elegir archivos")))
+        .replace("{{DRAG}}", &esc(&tr_in!(l, "o arrastrarlos aquí")))
+        .replace("{{FOOTER}}", &esc(&tr_in!(l, "Home File Sync · solo dentro de la misma red")))
+        .replace("{{JS}}", &js.to_string().replace("</", "<\\/"))
+}
+
+/// Página del móvil con datos de ejemplo, para las capturas del README.
+#[doc(hidden)]
+pub fn sample_page(l: crate::i18n::Lang, share: &str, device: &str) -> String {
+    let dest = Dest { share: Some(share.to_string()), path: String::new() };
+    page(l, &dest.describe(l), device)
 }
 
 #[cfg(test)]

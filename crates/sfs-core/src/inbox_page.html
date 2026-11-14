@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="es">
+<html lang="{{LANG}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Enviar a {{DEVICE}}</title>
+<title>{{TITLE}}</title>
 <style>
   :root { --bg:#f6f6f8; --card:#fff; --text:#16181d; --muted:#6b7180; --border:#e2e4ea; --accent:#2f6fed; --green:#1f9d55; --red:#d64545; color-scheme: light dark; }
   @media (prefers-color-scheme: dark) { :root { --bg:#15171c; --card:#1d2027; --text:#eceef3; --muted:#9198a6; --border:#2e333d; --accent:#4d86ff; --green:#39c172; --red:#f07070; } }
@@ -29,18 +29,19 @@
 </head>
 <body>
 <main>
-  <h1>Enviar archivos a «{{DEVICE}}»</h1>
-  <p>Se guardarán en <b>{{DEST}}</b>. No hace falta instalar nada.</p>
+  <h1>{{H1}}</h1>
+  <p>{{SUB}}</p>
   <label class="drop" id="drop">
-    <b>Elegir archivos</b>
-    <span>o arrastrarlos aquí</span>
+    <b>{{CHOOSE}}</b>
+    <span>{{DRAG}}</span>
     <input type="file" id="files" multiple>
   </label>
   <ul id="list"></ul>
-  <footer>Home File Sync · solo dentro de la misma red</footer>
+  <footer>{{FOOTER}}</footer>
 </main>
 <script>
 "use strict";
+const T = {{JS}};
 const list = document.getElementById("list");
 const input = document.getElementById("files");
 const drop = document.getElementById("drop");
@@ -52,8 +53,9 @@ function fmt(n) { const u = ["B","KB","MB","GB"]; let i = 0; while (n >= 1000 &&
 function add(files) {
   for (const f of files) {
     const li = document.createElement("li");
-    li.innerHTML = '<div class="row"><span class="name"></span><span class="st">En espera</span></div><div class="bar"><i></i></div>';
+    li.innerHTML = '<div class="row"><span class="name"></span><span class="st"></span></div><div class="bar"><i></i></div>';
     li.querySelector(".name").textContent = f.name;
+    li.querySelector(".st").textContent = T.waiting;
     list.appendChild(li);
     queue.push({ f, li });
   }
@@ -70,12 +72,12 @@ function next() {
   xhr.upload.onprogress = (e) => { if (e.lengthComputable) { const p = Math.floor(e.loaded / e.total * 100); bar.style.width = p + "%"; st.textContent = p + " % · " + fmt(e.loaded); } };
   xhr.onload = () => {
     let r = {}; try { r = JSON.parse(xhr.responseText); } catch (_) {}
-    if (xhr.status === 200 && r.ok) { li.className = "ok"; bar.style.width = "100%"; st.textContent = "Enviado ✓"; if (r.name !== f.name) st.textContent += " como «" + r.name + "»"; }
+    if (xhr.status === 200 && r.ok) { li.className = "ok"; bar.style.width = "100%"; st.textContent = T.sent; if (r.name !== f.name) st.textContent += T.as.replace("{}", r.name); }
     else { li.className = "err"; st.textContent = r.error || ("Error " + xhr.status); }
     busy = false; next();
   };
-  xhr.onerror = () => { li.className = "err"; st.textContent = "Sin conexión con el equipo"; busy = false; next(); };
-  st.textContent = "Enviando…";
+  xhr.onerror = () => { li.className = "err"; st.textContent = T.noconn; busy = false; next(); };
+  st.textContent = T.sending;
   xhr.send(f);
 }
 

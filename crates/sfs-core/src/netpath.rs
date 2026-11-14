@@ -36,13 +36,13 @@ pub enum AddrSource {
 }
 
 impl AddrSource {
-    pub fn text(&self) -> &'static str {
+    pub fn text(&self) -> String {
         match self {
-            AddrSource::Manual => "manual",
-            AddrSource::Beacon => "baliza UDP",
-            AddrSource::Mdns => "mDNS",
-            AddrSource::Learned => "conexión anterior",
-            AddrSource::Reported => "comunicada por el grupo",
+            AddrSource::Manual => tr!("manual"),
+            AddrSource::Beacon => tr!("baliza UDP"),
+            AddrSource::Mdns => tr!("mDNS"),
+            AddrSource::Learned => tr!("conexión anterior"),
+            AddrSource::Reported => tr!("comunicada por el grupo"),
         }
     }
 }
@@ -289,13 +289,13 @@ pub enum Phase {
 }
 
 impl Phase {
-    pub fn text(&self) -> &'static str {
+    pub fn text(&self) -> String {
         match self {
-            Phase::Resolve => "resolución del nombre",
-            Phase::Tcp => "conexión TCP",
-            Phase::Encryption => "cifrado (Noise)",
-            Phase::Auth => "autenticación de grupo",
-            Phase::Pairing => "emparejamiento",
+            Phase::Resolve => tr!("resolución del nombre"),
+            Phase::Tcp => tr!("conexión TCP"),
+            Phase::Encryption => tr!("cifrado (Noise)"),
+            Phase::Auth => tr!("autenticación de grupo"),
+            Phase::Pairing => tr!("emparejamiento"),
         }
     }
 }
@@ -355,15 +355,15 @@ impl fmt::Display for Attempt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} ({}", self.addr, self.source.text())?;
         if let Some(i) = &self.iface {
-            write!(f, ", interfaz {i}")?;
+            write!(f, "{}", tr!(", interfaz {}", i))?;
         }
         write!(f, ") TCP")?;
         if self.ok() {
-            write!(f, " → conectado en {} ms", self.elapsed.as_millis())
+            write!(f, "{}", tr!(" → conectado en {} ms", self.elapsed.as_millis()))
         } else {
-            write!(f, " → fallo en {}: {}", self.phase.text(), self.detail)?;
+            write!(f, "{}", tr!(" → fallo en {}: {}", self.phase.text(), self.detail))?;
             if let Some(c) = self.os_code {
-                write!(f, " [error del sistema {c}]")?;
+                write!(f, "{}", tr!(" [error del sistema {}]", c))?;
             }
             Ok(())
         }
@@ -382,27 +382,27 @@ pub fn looks_like_macos_lnp_block(attempts: &[Attempt]) -> bool {
         })
 }
 
-pub const MACOS_LNP_HELP: &str =
-    "macOS está bloqueando las conexiones de Home File Sync hacia la red local. \
-Abre Ajustes del Sistema → Privacidad y seguridad → Red local y activa Home File Sync. \
-Si ya estaba activado, desactívalo y vuelve a activarlo, y reinicia la aplicación.";
+/// Ayuda para el bloqueo del permiso «Red local» de macOS (traducida).
+pub fn macos_lnp_help() -> String {
+    tr!("macOS está bloqueando las conexiones de Home File Sync hacia la red local. Abre Ajustes del Sistema → Privacidad y seguridad → Red local y activa Home File Sync. Si ya estaba activado, desactívalo y vuelve a activarlo, y reinicia la aplicación.")
+}
 
 /// Mensaje comprensible para el usuario a partir de los intentos fallidos.
 pub fn explain(attempts: &[Attempt]) -> String {
     if attempts.is_empty() {
-        return "No se conoce ninguna dirección del equipo.".into();
+        return tr!("No se conoce ninguna dirección del equipo.");
     }
     let main = if looks_like_macos_lnp_block(attempts) {
-        MACOS_LNP_HELP.to_string()
+        macos_lnp_help()
     } else {
         let tcp: Vec<&Attempt> = attempts.iter().filter(|a| a.phase == Phase::Tcp).collect();
         let all = |k: NetErrKind| !tcp.is_empty() && tcp.iter().all(|a| a.kind == Some(k));
         if attempts.iter().any(|a| a.phase == Phase::Resolve) {
-            "No se encuentra ese nombre de equipo en la red. Prueba con su dirección IP.".into()
+            tr!("No se encuentra ese nombre de equipo en la red. Prueba con su dirección IP.")
         } else if all(NetErrKind::Refused) {
-            "El equipo rechaza la conexión. Comprueba que Home File Sync está abierto en él y que el puerto es correcto.".into()
+            tr!("El equipo rechaza la conexión. Comprueba que Home File Sync está abierto en él y que el puerto es correcto.")
         } else if all(NetErrKind::TimedOut) {
-            "El equipo no responde. Probablemente un cortafuegos bloquea la conexión o la red aísla a los equipos entre sí.".into()
+            tr!("El equipo no responde. Probablemente un cortafuegos bloquea la conexión o la red aísla a los equipos entre sí.")
         } else if tcp.iter().all(|a| {
             matches!(
                 a.kind,
@@ -410,12 +410,11 @@ pub fn explain(attempts: &[Attempt]) -> String {
             )
         }) && !tcp.is_empty()
         {
-            "No hay ruta de red hasta el equipo: está en otra red o subred que este equipo no alcanza.".into()
+            tr!("No hay ruta de red hasta el equipo: está en otra red o subred que este equipo no alcanza.")
         } else if attempts.iter().any(|a| a.phase != Phase::Tcp) {
-            "Se conectó con el equipo pero la comunicación se interrumpió. Vuelve a intentarlo."
-                .into()
+            tr!("Se conectó con el equipo pero la comunicación se interrumpió. Vuelve a intentarlo.")
         } else {
-            "No se puede conectar con el equipo.".into()
+            tr!("No se puede conectar con el equipo.")
         }
     };
     let detail: Vec<String> = attempts.iter().take(4).map(|a| a.to_string()).collect();
@@ -471,7 +470,7 @@ pub async fn connect_first(
                     Ok(r) => r,
                     Err(_) => Err(io::Error::new(
                         io::ErrorKind::TimedOut,
-                        "sin respuesta (tiempo de espera agotado)",
+                        tr!("sin respuesta (tiempo de espera agotado)"),
                     )),
                 };
                 (i, r, t.elapsed())
@@ -545,7 +544,7 @@ pub fn later_failure(
 pub fn parse_host(input: &str) -> Result<(String, Option<u16>), String> {
     let s = input.trim();
     if s.is_empty() {
-        return Err("Escribe la dirección IP o el nombre del equipo.".into());
+        return Err(tr!("Escribe la dirección IP o el nombre del equipo."));
     }
     if s.contains("://") || s.contains('/') || s.contains(char::is_whitespace) {
         return Err(
@@ -556,14 +555,14 @@ pub fn parse_host(input: &str) -> Result<(String, Option<u16>), String> {
     if let Some(rest) = s.strip_prefix('[') {
         let (ip, after) = rest
             .split_once(']')
-            .ok_or("Dirección IPv6 mal escrita: falta «]».")?;
+            .ok_or_else(|| tr!("Dirección IPv6 mal escrita: falta «]»."))?;
         let ip: Ipv6Addr = ip
             .parse()
-            .map_err(|_| "Dirección IPv6 no válida.".to_string())?;
+            .map_err(|_| tr!("Dirección IPv6 no válida."))?;
         let port = match after {
             "" => None,
             p => Some(parse_port(
-                p.strip_prefix(':').ok_or("Dirección IPv6 mal escrita.")?,
+                p.strip_prefix(':').ok_or_else(|| tr!("Dirección IPv6 mal escrita."))?,
             )?),
         };
         return Ok((ip.to_string(), port));
@@ -574,14 +573,14 @@ pub fn parse_host(input: &str) -> Result<(String, Option<u16>), String> {
     // IPv4 o nombre con ":puerto".
     let (host, port) = match s.rsplit_once(':') {
         Some((h, p)) if !h.contains(':') => (h, Some(parse_port(p)?)),
-        Some(_) => return Err("Dirección IPv6 no válida.".into()),
+        Some(_) => return Err(tr!("Dirección IPv6 no válida.")),
         None => (s, None),
     };
     if host.parse::<Ipv4Addr>().is_ok() {
         return Ok((host.to_string(), port));
     }
     if host.chars().all(|c| c.is_ascii_digit() || c == '.') {
-        return Err("Dirección IPv4 no válida.".into());
+        return Err(tr!("Dirección IPv4 no válida."));
     }
     let valid = host.len() <= 253
         && host.trim_end_matches('.').split('.').all(|l| {
@@ -592,7 +591,7 @@ pub fn parse_host(input: &str) -> Result<(String, Option<u16>), String> {
                 && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
         });
     if !valid {
-        return Err("Nombre de equipo no válido.".into());
+        return Err(tr!("Nombre de equipo no válido."));
     }
     Ok((host.to_string(), port))
 }
@@ -600,7 +599,7 @@ pub fn parse_host(input: &str) -> Result<(String, Option<u16>), String> {
 pub fn parse_port(p: &str) -> Result<u16, String> {
     match p.trim().parse::<u16>() {
         Ok(n) if n > 0 => Ok(n),
-        _ => Err("El puerto debe ser un número entre 1 y 65535.".into()),
+        _ => Err(tr!("El puerto debe ser un número entre 1 y 65535.")),
     }
 }
 

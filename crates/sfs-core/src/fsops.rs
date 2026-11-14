@@ -51,10 +51,7 @@ pub fn ensure_meta(root: &Path) -> std::io::Result<bool> {
     if !existed {
         let _ = std::fs::write(
             meta.join("LEEME.txt"),
-            "Carpeta interna de Home File Sync.\n\
-             tmp/        descargas en curso\n\
-             versiones/  copias de archivos sustituidos por versiones nuevas (se borran a los 14 días)\n\
-             No la borres mientras la aplicación está en uso.\n",
+            tr!("Carpeta interna de Home File Sync.\ntmp/        descargas en curso\nversiones/  copias de seguridad internas\npapelera/   archivos borrados en otros equipos (se borran a los 14 días)\nNo la borres mientras la aplicación está en uso.\n"),
         );
         set_hidden(&meta);
     }

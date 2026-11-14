@@ -124,14 +124,14 @@ pub fn windows_representable(rel: &str) -> Result<(), String> {
     ];
     for comp in rel.split('/') {
         if let Some(c) = comp.chars().find(|c| matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*')) {
-            return Err(format!("el nombre «{comp}» contiene «{c}», que Windows no admite"));
+            return Err(tr!("el nombre «{}» contiene «{}», que Windows no admite", comp, c));
         }
         if comp.ends_with('.') || comp.ends_with(' ') {
-            return Err(format!("el nombre «{comp}» termina en punto o espacio, que Windows no admite"));
+            return Err(tr!("el nombre «{}» termina en punto o espacio, que Windows no admite", comp));
         }
         let stem = comp.split('.').next().unwrap_or("").to_lowercase();
         if RESERVED.contains(&stem.as_str()) {
-            return Err(format!("«{comp}» es un nombre reservado en Windows"));
+            return Err(tr!("«{}» es un nombre reservado en Windows", comp));
         }
     }
     Ok(())
@@ -174,7 +174,7 @@ pub fn check_no_symlinks(root: &Path, rel: &str) -> std::io::Result<()> {
             Ok(m) if m.file_type().is_symlink() => {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::PermissionDenied,
-                    "la ruta atraviesa un enlace simbólico",
+                    tr!("la ruta atraviesa un enlace simbólico"),
                 ))
             }
             Ok(_) => {}

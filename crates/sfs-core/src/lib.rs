@@ -5,6 +5,8 @@
 //!
 //! Ver `docs/ARQUITECTURA.md` para el diseño completo.
 
+#[macro_use]
+pub mod i18n;
 pub mod auth;
 pub mod decide;
 pub mod diag;

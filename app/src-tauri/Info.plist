@@ -2,8 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>es</string>
+    <string>ca</string>
+  </array>
   <key>NSLocalNetworkUsageDescription</key>
-  <string>Home File Sync necesita acceder a la red local para encontrar los otros equipos del grupo y sincronizar archivos con ellos.</string>
+  <string>Home File Sync needs access to the local network to find the other computers that share your folders and sync files with them.</string>
   <key>NSBonjourServices</key>
   <array>
     <string>_homefilesync._tcp</string>

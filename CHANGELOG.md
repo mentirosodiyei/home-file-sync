@@ -1,5 +1,12 @@
 # Historial de versiones
 
+## 0.3.1
+- **En tres idiomas: català, castellano e inglés.** La app usa el idioma del sistema (catalán, castellano, o inglés para cualquier otro idioma).
+  - Traducidos la ventana, el menú de la bandeja o de la barra de menús, los avisos y errores, la página que se abre en el móvil (según el idioma del teléfono) y el aviso de macOS sobre la red local.
+  - El instalador de Windows también está en catalán, castellano e inglés.
+  - El registro de diagnóstico se mantiene en castellano.
+- README en los tres idiomas, con capturas de cada uno.
+
 ## 0.3.0
 - **Fuera de casa por VPN (WireGuard):** nuevo ajuste «Permitir conexiones por VPN».
   - Desactivado por defecto: el equipo solo atiende a la red local.

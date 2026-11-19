@@ -616,6 +616,12 @@ impl Engine {
         let canon = check_folder(path)?;
         {
             let mut s = self.inner.settings.lock().unwrap();
+            // Una carpeta nueva que es un repositorio empieza como proyecto de
+            // código: así nunca se sincronizan .git, target/ ni node_modules,
+            // ni siquiera en el primer recorrido.
+            if s.folder.is_none() && canon.join(".git").exists() {
+                s.code_project = true;
+            }
             s.folder = Some(canon.clone());
         }
         self.inner.save_settings();

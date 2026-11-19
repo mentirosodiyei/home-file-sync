@@ -55,6 +55,11 @@ pub fn ensure_meta(root: &Path) -> std::io::Result<bool> {
         );
         set_hidden(&meta);
     }
+    // Si la carpeta es un repositorio, git no debe ver nunca la carpeta interna.
+    let ignore = meta.join(".gitignore");
+    if !ignore.exists() {
+        let _ = std::fs::write(ignore, "*\n");
+    }
     Ok(existed)
 }
 

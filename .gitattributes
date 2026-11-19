@@ -1,0 +1,4 @@
+# Saltos de línea LF en todos los sistemas: la carpeta del proyecto se
+# sincroniza entre macOS y Windows con Home File Sync, y con CRLF en Windows
+# cada archivo aparecería como modificado en el Mac.
+* text=auto eol=lf

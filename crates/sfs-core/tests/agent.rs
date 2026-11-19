@@ -132,7 +132,8 @@ async fn code_project_skips_repository_and_ignored_files() {
     std::fs::write(m.join("logs/a.log"), "uno").unwrap();
 
     let (share, code) = mac.hub.create_share("Proyecto", &m, ShareMode::Sync).await.unwrap();
-    mac.hub.set_code_project(&share, true).unwrap();
+    assert!(mac.hub.share(&share).unwrap().code_project(), "un repositorio empieza como proyecto de código");
+    assert_eq!(std::fs::read_to_string(m.join(".homefilesync/.gitignore")).unwrap(), "*\n", "git no ve la carpeta interna");
     let p = pc.folder();
     let p_id = pc.hub.join_share_at(mac.addr(&share), &code, &p, ShareMode::Sync).await.unwrap();
     pc.hub.set_code_project(&p_id, true).unwrap();

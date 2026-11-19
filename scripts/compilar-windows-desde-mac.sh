@@ -4,6 +4,9 @@
 #                       rustup target add x86_64-pc-windows-msvc
 # Nota: makensis de Homebrew falla (std::bad_alloc) sin una configuración regional UTF-8.
 set -euo pipefail
+# Identificadores de la app en Google y Dropbox (inicio de sesión), si existen.
+# Ver docs/REGISTRO-SERVICIOS.md. El archivo no se sube al repositorio.
+if [ -f "$(dirname "$0")/../.env.oauth" ]; then set -a; . "$(dirname "$0")/../.env.oauth"; set +a; fi
 cd "$(dirname "$0")/../app/src-tauri"
 export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 # Sin rutas personales en los ejecutables (usuario, carpetas): el compilador

@@ -102,6 +102,75 @@ async fn rename_share(app: State<'_, App>, id: String, name: String) -> Result<(
     app.hub.rename_share(&id, &name)
 }
 
+/// Elige la carpeta del servicio externo (la de la app de Google Drive, Dropbox…) para el relevo.
+#[tauri::command]
+async fn pick_relay(handle: AppHandle, app: State<'_, App>, id: String) -> Result<Option<String>, String> {
+    let Some(p) = pick_folder(handle).await? else { return Ok(None) };
+    app.hub.set_relay(&id, Some(&PathBuf::from(&p))).map(|_| Some(p))
+}
+
+/// Qué inicios de sesión incluye esta versión (dependen de cómo se compiló).
+#[tauri::command]
+async fn relay_options() -> Result<serde_json::Value, String> {
+    use sfs_core::store::oauth::{available, Provider};
+    Ok(serde_json::json!({ "google": available(Provider::Google), "dropbox": available(Provider::Dropbox) }))
+}
+
+async fn set_target(app: &State<'_, App>, id: String, target: sfs_core::store::RelayTarget, secret: Option<String>) -> Result<(), String> {
+    let hub = app.hub.clone();
+    tauri::async_runtime::spawn_blocking(move || hub.set_relay_target(&id, Some(target), secret.as_deref())).await.map_err(|e| e.to_string())?
+}
+
+/// NAS por SMB: dirección, carpeta compartida, usuario y contraseña.
+#[tauri::command]
+async fn relay_set_smb(app: State<'_, App>, id: String, host: String, share: String, subpath: String, user: String, password: Option<String>) -> Result<(), String> {
+    let t = sfs_core::store::RelayTarget::Smb { host: host.trim().into(), share: share.trim().into(), subpath: subpath.trim().into(), user: user.trim().into() };
+    set_target(&app, id, t, password.filter(|p| !p.is_empty())).await
+}
+
+/// Servidor WebDAV (Nextcloud, kDrive, NAS…).
+#[tauri::command]
+async fn relay_set_webdav(app: State<'_, App>, id: String, url: String, user: String, password: Option<String>) -> Result<(), String> {
+    let t = sfs_core::store::RelayTarget::WebDav { url: sfs_core::store::webdav::normalize_url(&url)?, user: user.trim().into() };
+    set_target(&app, id, t, password.filter(|p| !p.is_empty())).await
+}
+
+/// Inicia sesión en Google Drive o Dropbox en el navegador y usa esa cuenta como relevo.
+#[tauri::command]
+async fn relay_login(handle: AppHandle, app: State<'_, App>, id: String, provider: String, path: Option<String>) -> Result<String, String> {
+    use sfs_core::store::oauth::{begin, Provider};
+    let p = Provider::parse(&provider).ok_or("?")?;
+    let (url, login) = begin(p)?;
+    handle.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())?;
+    let session = tauri::async_runtime::spawn_blocking(move || login.wait(std::time::Duration::from_secs(300))).await.map_err(|e| e.to_string())??;
+    let target = match p {
+        Provider::Google => sfs_core::store::RelayTarget::GoogleDrive { account: session.account.clone() },
+        Provider::Dropbox => sfs_core::store::RelayTarget::Dropbox {
+            account: session.account.clone(),
+            path: sfs_core::store::dropbox::normalize_path(path.as_deref().unwrap_or("")),
+        },
+    };
+    set_target(&app, id, target, Some(session.refresh_token)).await?;
+    Ok(session.account)
+}
+
+/// Cambia la carpeta de Dropbox sin volver a iniciar sesión.
+#[tauri::command]
+async fn relay_set_dropbox_path(app: State<'_, App>, id: String, account: String, path: String) -> Result<(), String> {
+    let t = sfs_core::store::RelayTarget::Dropbox { account, path: sfs_core::store::dropbox::normalize_path(&path) };
+    set_target(&app, id, t, None).await
+}
+
+#[tauri::command]
+async fn clear_relay(app: State<'_, App>, id: String) -> Result<(), String> {
+    app.hub.set_relay(&id, None)
+}
+
+#[tauri::command]
+async fn set_relay_keep_old(app: State<'_, App>, id: String, keep_old: bool) -> Result<(), String> {
+    app.hub.set_relay_keep_old(&id, keep_old)
+}
+
 #[tauri::command]
 async fn change_folder(handle: AppHandle, app: State<'_, App>, id: String) -> Result<Option<String>, String> {
     let Some(p) = pick_folder(handle).await? else { return Ok(None) };
@@ -143,6 +212,34 @@ async fn set_listen_vpn(app: State<'_, App>, on: bool) -> Result<(), String> {
 }
 
 /// Idioma de la interfaz ("ca", "es" o "en"), según el del sistema.
+// --- Órdenes de las IA ---
+
+#[tauri::command]
+async fn set_agent_policy(app: State<'_, App>, id: String, policy: sfs_core::agent::AgentPolicy) -> Result<(), String> {
+    app.hub.set_agent_policy(&id, policy)
+}
+
+#[tauri::command]
+async fn set_code_project(app: State<'_, App>, id: String, on: bool) -> Result<(), String> {
+    app.hub.set_code_project(&id, on)
+}
+
+#[tauri::command]
+async fn approve_run(app: State<'_, App>, id: String, peer_id: String, run: String, answer: sfs_core::agent::Approval) -> Result<(), String> {
+    app.hub.approve_run(&id, &peer_id, &run, answer)
+}
+
+#[tauri::command]
+async fn stop_incoming(app: State<'_, App>, id: String, peer_id: String, run: String) -> Result<(), String> {
+    app.hub.stop_incoming(&id, &peer_id, &run)
+}
+
+/// Orden con la que las apps de IA arrancan el servidor MCP.
+#[tauri::command]
+async fn agent_setup() -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({ "command": sfs_core::agent::control::mcp_command() }))
+}
+
 #[tauri::command]
 async fn get_lang() -> Result<String, String> {
     Ok(sfs_core::i18n::lang().code().to_string())
@@ -156,6 +253,11 @@ async fn app_version() -> Result<String, String> {
 #[tauri::command]
 async fn start_receive(app: State<'_, App>, share: Option<String>) -> Result<sfs_core::inbox::ReceiveView, String> {
     app.hub.start_receive(share.as_deref())
+}
+
+#[tauri::command]
+async fn set_receive_remote(app: State<'_, App>, on: bool) -> Result<(), String> {
+    app.hub.set_receive_remote(on)
 }
 
 #[tauri::command]
@@ -349,7 +451,25 @@ fn app_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
     Menu::with_items(app, &[&app_sub, &edit, &window])
 }
 
+/// `home-file-sync --mcp [--data DIR]`: servidor MCP para las apps de IA.
+/// Habla por stdin/stdout, así que no puede escribir nada más en la salida.
+fn run_mcp_bridge() {
+    let mut args = std::env::args().skip(1);
+    let mut data = None;
+    while let Some(a) = args.next() {
+        if a == "--data" {
+            data = args.next().map(PathBuf::from);
+        }
+    }
+    let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("runtime");
+    rt.block_on(sfs_core::agent::control::run_bridge(data));
+}
+
 fn main() {
+    if std::env::args().skip(1).any(|a| a == "--mcp") {
+        run_mcp_bridge();
+        return;
+    }
     // Idioma del sistema: català, castellano o inglés.
     sfs_core::i18n::set_lang(sfs_core::i18n::system_lang());
     use tracing_subscriber::layer::SubscriberExt;
@@ -404,11 +524,19 @@ fn main() {
                 })
                 .build(app)?;
 
-            // Mantiene el texto de la bandeja al día.
+            // Mantiene el texto de la bandeja al día y muestra la ventana cuando
+            // una IA de otro equipo pide permiso para ejecutar algo.
+            let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                let mut asked = 0;
                 loop {
                     let _ = tray.set_tooltip(Some(tooltip(&hub.snapshot())));
-                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    let now = hub.pending_approvals();
+                    if now > asked {
+                        show_window(&app_handle);
+                    }
+                    asked = now;
+                    tokio::time::sleep(Duration::from_secs(1)).await;
                 }
             });
             Ok(())
@@ -430,6 +558,14 @@ fn main() {
             open_invite,
             close_invite,
             set_mode,
+            pick_relay,
+            relay_options,
+            relay_set_smb,
+            relay_set_webdav,
+            relay_login,
+            relay_set_dropbox_path,
+            clear_relay,
+            set_relay_keep_old,
             rename_share,
             change_folder,
             open_folder,
@@ -438,9 +574,15 @@ fn main() {
             set_alias,
             start_receive,
             stop_receive,
+            set_receive_remote,
             get_network,
             set_listen_vpn,
             app_version,
+            set_agent_policy,
+            set_code_project,
+            approve_run,
+            stop_incoming,
+            agent_setup,
             get_lang,
             get_logs,
             logs_text,

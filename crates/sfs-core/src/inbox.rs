@@ -46,6 +46,10 @@ pub struct ReceiveView {
     pub label: String,
     pub expires_in_secs: u64,
     pub received: Vec<ReceivedView>,
+    /// Enlace público para enviar desde fuera de casa (si se ha pedido).
+    pub remote: crate::tunnel::TunnelView,
+    /// Dirección de la red local (cuando el QR muestra el enlace público).
+    pub local_url: String,
 }
 
 struct Session {
@@ -63,6 +67,10 @@ struct Session {
 struct State {
     session: Option<Session>,
     device_name: String,
+    /// Enlace público (necesita una carpeta para guardar cloudflared).
+    tunnel: Option<crate::tunnel::Tunnel>,
+    /// Subidas por partes en curso (para no mezclar dos peticiones de la misma).
+    busy_parts: std::collections::HashSet<String>,
 }
 
 #[derive(Clone)]
@@ -82,7 +90,7 @@ impl Inbox {
             },
         };
         let port = listener.local_addr()?.port();
-        let inbox = Inbox { port, state: Arc::new(Mutex::new(State { session: None, device_name: device_name.into() })) };
+        let inbox = Inbox { port, state: Arc::new(Mutex::new(State { session: None, device_name: device_name.into(), tunnel: None, busy_parts: Default::default() })) };
         let i = inbox.clone();
         tokio::spawn(async move {
             loop {
@@ -107,6 +115,26 @@ impl Inbox {
         self.port
     }
 
+    /// Carpeta donde guardar cloudflared: habilita el enlace público.
+    pub fn set_tools_dir(&self, dir: &Path) {
+        self.state.lock().unwrap().tunnel = Some(crate::tunnel::Tunnel::new(dir));
+    }
+
+    /// Abre o cierra el enlace público de la sesión abierta.
+    pub fn set_remote(&self, on: bool) -> Result<(), String> {
+        let (tunnel, expires) = {
+            let st = self.state.lock().unwrap();
+            let t = st.tunnel.clone().ok_or_else(|| tr!("El enlace público no está disponible en este sistema."))?;
+            (t, st.session.as_ref().map(|s| s.expires))
+        };
+        match (on, expires) {
+            (true, Some(exp)) => tunnel.start(self.port, exp),
+            (true, None) => return Err(tr!("Enlace caducado o no válido")),
+            (false, _) => tunnel.stop(),
+        }
+        Ok(())
+    }
+
     pub fn set_device_name(&self, name: &str) {
         self.state.lock().unwrap().device_name = name.into();
     }
@@ -117,6 +145,7 @@ impl Inbox {
     pub fn open(&self, dest: &Path, temp_dir: &Path, label: &str, share: Option<&str>, ttl: Duration) -> std::io::Result<ReceiveView> {
         std::fs::create_dir_all(dest)?;
         std::fs::create_dir_all(temp_dir)?;
+        remove_parts(temp_dir);
         let token = hex::encode(crate::auth::random_bytes::<16>());
         self.state.lock().unwrap().session = Some(Session {
             token,
@@ -132,7 +161,12 @@ impl Inbox {
     }
 
     pub fn close(&self) {
-        if self.state.lock().unwrap().session.take().is_some() {
+        let mut st = self.state.lock().unwrap();
+        if let Some(t) = &st.tunnel {
+            t.stop();
+        }
+        if let Some(s) = st.session.take() {
+            remove_parts(&s.temp_dir);
             tracing::info!("Recepción de archivos cerrada");
         }
     }
@@ -141,14 +175,27 @@ impl Inbox {
     pub fn view(&self) -> Option<ReceiveView> {
         let mut st = self.state.lock().unwrap();
         if st.session.as_ref().is_some_and(|s| s.expires <= Instant::now()) {
-            st.session = None;
+            if let Some(s) = st.session.take() {
+                remove_parts(&s.temp_dir);
+            }
+            if let Some(t) = &st.tunnel {
+                t.stop();
+            }
         }
         let s = st.session.as_ref()?;
         let urls: Vec<String> = local_urls(self.port, &s.token);
-        let url = urls.first().cloned().unwrap_or_else(|| format!("http://127.0.0.1:{}/r/{}", self.port, s.token));
+        let local = urls.first().cloned().unwrap_or_else(|| format!("http://127.0.0.1:{}/r/{}", self.port, s.token));
+        let remote = st.tunnel.as_ref().map(|t| t.view()).unwrap_or(crate::tunnel::TunnelView { status: "off".into(), url: None, error: None, progress: None });
+        let public = st.tunnel.as_ref().and_then(|t| t.public_url()).map(|base| format!("{base}/r/{}", s.token));
+        let (url, other_urls) = match public {
+            Some(p) => (p, urls),
+            None => (local.clone(), urls.into_iter().skip(1).collect()),
+        };
         Some(ReceiveView {
             qr_svg: qr_svg(&url),
-            other_urls: urls.into_iter().skip(1).collect(),
+            other_urls,
+            remote,
+            local_url: local,
             url,
             label: s.label.clone(),
             expires_in_secs: s.expires.saturating_duration_since(Instant::now()).as_secs(),
@@ -190,12 +237,29 @@ impl Inbox {
                 if chunked || content_length.is_none() {
                     return respond(&mut stream, 411, "application/json", br#"{"ok":false,"error":"Falta Content-Length"}"#).await;
                 }
-                let name = query
-                    .split('&')
-                    .find_map(|kv| kv.strip_prefix("name="))
-                    .map(percent_decode)
-                    .map(|n| sanitize_name(&n))
-                    .unwrap_or_else(|| "archivo".into());
+                let param = |k: &str| query.split('&').find_map(|kv| kv.strip_prefix(k).and_then(|v| v.strip_prefix('='))).map(percent_decode);
+                let name = param("name").map(|n| sanitize_name(&n)).unwrap_or_else(|| "archivo".into());
+                // Subida por partes (reanudable; necesaria a través del enlace
+                // público, que limita el tamaño de cada petición).
+                if let Some(id) = param("id") {
+                    let (Some(offset), Some(total)) = (param("offset").and_then(|v| v.parse::<u64>().ok()), param("total").and_then(|v| v.parse::<u64>().ok())) else {
+                        return respond(&mut stream, 400, "application/json", br#"{"ok":false,"error":"offset/total"}"#).await;
+                    };
+                    if id.is_empty() || id.len() > 32 || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+                        return respond(&mut stream, 400, "application/json", br#"{"ok":false,"error":"id"}"#).await;
+                    }
+                    return match self.receive_part(lang, token, &id, &name, offset, total, content_length.unwrap(), rest, &mut stream).await {
+                        Ok(Part::More(have)) => respond(&mut stream, 200, "application/json", serde_json::json!({"ok": true, "have": have}).to_string().as_bytes()).await,
+                        Ok(Part::Done(saved, size)) => {
+                            respond(&mut stream, 200, "application/json", serde_json::json!({"ok": true, "name": saved, "size": size, "have": size}).to_string().as_bytes()).await
+                        }
+                        Ok(Part::Mismatch(have)) => respond(&mut stream, 409, "application/json", serde_json::json!({"ok": false, "have": have}).to_string().as_bytes()).await,
+                        Err(e) => {
+                            tracing::warn!("Recepción web: «{name}» no se pudo guardar: {e}");
+                            respond(&mut stream, 500, "application/json", serde_json::json!({"ok": false, "error": e.to_string()}).to_string().as_bytes()).await
+                        }
+                    };
+                }
                 match self.receive(lang, token, &name, content_length.unwrap(), rest, &mut stream).await {
                     Ok((saved, size)) => {
                         let body = serde_json::json!({"ok": true, "name": saved, "size": size}).to_string();
@@ -271,6 +335,110 @@ impl Inbox {
             s.received.push(ReceivedView { name: final_name.clone(), size: len });
         }
         Ok((final_name, len))
+    }
+}
+
+enum Part {
+    /// Parte guardada; se tienen estos bytes.
+    More(u64),
+    /// Archivo completo y colocado con este nombre.
+    Done(String, u64),
+    /// La parte no empieza donde acaba lo recibido: el cliente debe seguir desde aquí.
+    Mismatch(u64),
+}
+
+struct PartGuard(Arc<Mutex<State>>, String);
+impl Drop for PartGuard {
+    fn drop(&mut self) {
+        self.0.lock().unwrap().busy_parts.remove(&self.1);
+    }
+}
+
+fn part_path(temp_dir: &Path, token: &str, id: &str) -> PathBuf {
+    // El token forma parte del nombre: una sesión nueva nunca continúa una parte vieja.
+    let tag = &blake3::hash(format!("{token}/{id}").as_bytes()).to_hex()[..24];
+    temp_dir.join(format!("upload-{tag}.part"))
+}
+
+fn remove_parts(temp_dir: &Path) {
+    if let Ok(rd) = std::fs::read_dir(temp_dir) {
+        for e in rd.flatten() {
+            let n = e.file_name().to_string_lossy().into_owned();
+            if n.starts_with("upload-") && n.ends_with(".part") {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+}
+
+impl Inbox {
+    #[allow(clippy::too_many_arguments)]
+    async fn receive_part(
+        &self,
+        lang: crate::i18n::Lang,
+        token: &str,
+        id: &str,
+        name: &str,
+        offset: u64,
+        total: u64,
+        len: u64,
+        already: Vec<u8>,
+        stream: &mut TcpStream,
+    ) -> std::io::Result<Part> {
+        let invalid = || std::io::Error::other(tr_in!(lang, "Enlace caducado o no válido"));
+        let (dest, temp_dir) = {
+            let mut st = self.state.lock().unwrap();
+            let s = st.session.as_ref().filter(|s| crate::auth::ct_eq(s.token.as_bytes(), token.as_bytes())).ok_or_else(invalid)?;
+            let r = (s.dest.clone(), s.temp_dir.clone());
+            if !st.busy_parts.insert(id.to_string()) {
+                return Ok(Part::Mismatch(u64::MAX));
+            }
+            r
+        };
+        let _guard = PartGuard(self.state.clone(), id.to_string());
+        let part = part_path(&temp_dir, token, id);
+        let have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+        if offset != have || offset + len > total {
+            return Ok(Part::Mismatch(have));
+        }
+        if offset == 0 {
+            if let Some(free) = crate::fsops::available_space(&dest) {
+                if free < total + 64 * 1024 * 1024 {
+                    return Err(std::io::Error::other(tr_in!(lang, "no hay espacio suficiente en el disco")));
+                }
+            }
+        }
+        let mut f = tokio::fs::OpenOptions::new().create(true).append(true).open(&part).await?;
+        let mut written = 0u64;
+        let first = &already[..already.len().min(len as usize)];
+        f.write_all(first).await?;
+        written += first.len() as u64;
+        let mut buf = vec![0u8; 256 * 1024];
+        while written < len {
+            let want = buf.len().min((len - written) as usize);
+            let n = match tokio::time::timeout(IDLE, stream.read(&mut buf[..want])).await {
+                Ok(Ok(n)) if n > 0 => n,
+                _ => {
+                    // Lo recibido se conserva: el cliente continuará desde ahí.
+                    f.flush().await?;
+                    return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, tr_in!(lang, "subida interrumpida")));
+                }
+            };
+            f.write_all(&buf[..n]).await?;
+            written += n as u64;
+        }
+        f.sync_all().await?;
+        drop(f);
+        let have = offset + len;
+        if have < total {
+            return Ok(Part::More(have));
+        }
+        let final_name = place_unique(&part, &dest, name)?;
+        tracing::info!("Recibido por el navegador: «{final_name}» ({total} bytes, por partes)");
+        if let Some(s) = self.state.lock().unwrap().session.as_mut() {
+            s.received.push(ReceivedView { name: final_name.clone(), size: total });
+        }
+        Ok(Part::Done(final_name, total))
     }
 }
 
@@ -378,7 +546,9 @@ async fn read_head(stream: &mut TcpStream) -> std::io::Result<(String, Vec<u8>)>
 async fn respond(stream: &mut TcpStream, code: u16, ctype: &str, body: &[u8]) -> std::io::Result<()> {
     let reason = match code {
         200 => "OK",
+        400 => "Bad Request",
         404 => "Not Found",
+        409 => "Conflict",
         410 => "Gone",
         411 => "Length Required",
         _ => "Error",

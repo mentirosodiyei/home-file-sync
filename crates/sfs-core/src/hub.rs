@@ -40,6 +40,8 @@ pub struct HubConfig {
     pub inbox_port: Option<u16>,
     /// Carpeta para lo recibido por navegador cuando no se elige una compartida.
     pub received_dir: Option<PathBuf>,
+    /// Canal local para el servidor MCP de las IA (ver `agent::control`).
+    pub agent_control: bool,
 }
 
 impl HubConfig {
@@ -53,6 +55,7 @@ impl HubConfig {
             beacon_port: DEFAULT_BEACON_PORT,
             inbox_port: None,
             received_dir: None,
+            agent_control: true,
         }
     }
 }
@@ -178,7 +181,10 @@ impl Hub {
         let my_id = crate::auth::device_id(&hex::decode(&settings.public_key).unwrap_or_default());
         crate::netpath::set_listen_vpn(settings.listen_vpn);
         let inbox = match Inbox::start(cfg.inbox_port, &settings.device_name).await {
-            Ok(i) => Some(i),
+            Ok(i) => {
+                i.set_tools_dir(&cfg.data_dir.join("tools"));
+                Some(i)
+            }
             Err(e) => {
                 tracing::warn!("Recepción por navegador no disponible: {e}");
                 None
@@ -220,6 +226,12 @@ impl Hub {
                     }
                 }
             });
+        }
+        if inner.cfg.agent_control {
+            match crate::agent::control::start(hub.clone(), &inner.cfg.data_dir).await {
+                Ok((_, task)) => inner.tasks.lock().unwrap().push(task),
+                Err(e) => tracing::warn!("Canal local para las IA no disponible: {e}"),
+            }
         }
         tracing::info!("Home File Sync: {} carpeta(s) compartida(s)", inner.shares.lock().unwrap().len());
         Ok(hub)
@@ -477,6 +489,20 @@ impl Hub {
         Ok(())
     }
 
+    /// Usa una carpeta de un servicio externo (nube o NAS) como relevo de esta carpeta compartida.
+    pub fn set_relay(&self, id: &str, path: Option<&Path>) -> Result<(), String> {
+        self.engine(id)?.set_relay(path)
+    }
+
+    /// Configura el relevo con cualquier servicio (bloqueante: puede conectar por red).
+    pub fn set_relay_target(&self, id: &str, target: Option<crate::store::RelayTarget>, secret: Option<&str>) -> Result<(), String> {
+        self.engine(id)?.set_relay_target(target, secret)
+    }
+
+    pub fn set_relay_keep_old(&self, id: &str, keep_old: bool) -> Result<(), String> {
+        self.engine(id)?.set_relay_keep_old(keep_old)
+    }
+
     pub fn rename_share(&self, id: &str, name: &str) -> Result<(), String> {
         self.engine(id)?.rename_group(name);
         Ok(())
@@ -604,12 +630,53 @@ impl Hub {
         }
     }
 
+    /// Permite (o no) enviar desde fuera de casa con un enlace público temporal.
+    pub fn set_receive_remote(&self, on: bool) -> Result<(), String> {
+        let inbox = self.inner.inbox.as_ref().ok_or_else(|| tr!("La recepción por navegador no está disponible en este equipo."))?;
+        inbox.set_remote(on)
+    }
+
     pub fn inbox_port(&self) -> Option<u16> {
         self.inner.inbox.as_ref().map(|i| i.port())
     }
 
     // -----------------------------------------------------------------------
     // Estado
+    // -----------------------------------------------------------------------
+    // Órdenes de las IA
+    // -----------------------------------------------------------------------
+
+    pub fn set_agent_policy(&self, id: &str, policy: crate::agent::AgentPolicy) -> Result<(), String> {
+        let e = self.engine(id)?;
+        // Al activarlo en una carpeta con un repositorio, se marca como proyecto de código.
+        if policy.enabled && !e.agent_policy().enabled && !e.code_project() && e.folder().is_some_and(|f| f.join(".git").exists()) {
+            e.set_code_project(true);
+        }
+        e.set_agent_policy(policy);
+        Ok(())
+    }
+
+    pub fn set_code_project(&self, id: &str, on: bool) -> Result<(), String> {
+        self.engine(id)?.set_code_project(on);
+        Ok(())
+    }
+
+    pub fn approve_run(&self, id: &str, peer: &str, run: &str, answer: crate::agent::Approval) -> Result<(), String> {
+        let run: u64 = run.parse().map_err(|_| tr!("Esa petición ya no está pendiente."))?;
+        self.engine(id)?.approve_run(peer, run, answer)
+    }
+
+    pub fn stop_incoming(&self, id: &str, peer: &str, run: &str) -> Result<(), String> {
+        let run: u64 = run.parse().map_err(|_| tr!("Esa orden ya no se está ejecutando."))?;
+        self.engine(id)?.stop_incoming(peer, run)
+    }
+
+    /// Hay peticiones de las IA esperando aprobación en este equipo.
+    pub fn pending_approvals(&self) -> usize {
+        let engines: Vec<Engine> = self.inner.shares.lock().unwrap().values().cloned().collect();
+        engines.iter().map(|e| e.agent_view().approvals.len()).sum()
+    }
+
     // -----------------------------------------------------------------------
 
     pub fn device_id(&self) -> String {
@@ -658,6 +725,9 @@ impl Hub {
     pub async fn shutdown(&self) {
         for t in self.inner.tasks.lock().unwrap().drain(..) {
             t.abort();
+        }
+        if self.inner.cfg.agent_control {
+            let _ = std::fs::remove_file(self.inner.cfg.data_dir.join(crate::agent::control::CONTROL_FILE));
         }
         if let Some(mut d) = self.inner.discovery.lock().unwrap().take() {
             d.stop();

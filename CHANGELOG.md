@@ -1,5 +1,30 @@
 # Historial de versiones
 
+## Sin publicar
+- **IA en varios equipos.** Una IA (Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, LM Studio…) puede pedir a otro equipo de la carpeta que ejecute una orden —las pruebas, la compilación— y recibir la salida y el código de salida.
+  - Servidor MCP incluido en la app: `home-file-sync --mcp`. Herramientas `list_machines`, `run_command`, `get_run`, `cancel_run` y `sync_now`. Habla con la app abierta por un canal local con token.
+  - Decide el equipo que ejecuta: desactivado por defecto. Se activa por carpeta, con una lista de órdenes que se ejecutan sin preguntar; las demás se aprueban (una vez o siempre) o se rechazan en su pantalla, que se abre sola al llegar una petición.
+  - Sin intérprete de órdenes, dentro de la carpeta y con el `PATH` de la shell del usuario (Homebrew, cargo, nvm…). Detener o cancelar termina también los procesos hijos.
+  - Antes de ejecutar espera a tener los cambios del que lo pide; al terminar, lo generado vuelve antes de dar el resultado.
+  - Viaja por la conexión cifrada de la carpeta; los equipos con versiones anteriores lo ignoran.
+- **Carpetas de proyecto de código:** respetan los `.gitignore` (de cualquier subcarpeta) y `.homefilesyncignore`, y no sincronizan `.git`, `.hg`, `.svn` ni `.jj`. Lo que pasa a excluirse deja de sincronizarse sin borrarse en ningún equipo.
+
+## 0.4.0
+- **Nube o NAS de relevo**, para cuando los equipos no coinciden conectados. Cinco formas de conectar, desde la propia app:
+  - carpeta de la app del servicio (Google Drive, Dropbox, OneDrive, Proton Drive, iCloud, pCloud…);
+  - Google Drive iniciando sesión (permiso mínimo; misma cuenta en todos los equipos);
+  - Dropbox iniciando sesión (vale con cuentas distintas compartiendo la carpeta desde Dropbox);
+  - NAS por SMB con dirección, usuario y contraseña, conectado por el propio sistema;
+  - servidor WebDAV (Nextcloud, ownCloud, kDrive…).
+  - Contraseñas y sesiones en el llavero del sistema.
+  - Si todos los equipos están conectados no se usa. Si falta alguno, lo que le falta se deja allí y lo recoge al volver, también los borrados.
+  - Todo va cifrado con la clave del grupo, incluidos los nombres: el servicio no ve qué hay.
+  - Cuando lo tienen todos los equipos que usan el relevo, se borra del servicio. Opción común: moverlo a `old/` en el servicio, para vaciarlo a mano.
+  - Los equipos en copia de seguridad reciben por el relevo, pero lo suyo no se sube.
+- **Recibir desde fuera de casa con el QR:** opción *Permitir enviar desde fuera de casa* en la ventana de recepción. Abre un enlace `https://` temporal con Cloudflare (sin cuenta) mientras la ventana está abierta.
+  - `cloudflared` se descarga la primera vez de la publicación oficial y solo se usa si su SHA-256 coincide con el fijado.
+- La página del móvil sube por partes y continúa donde se quedó si se corta la conexión.
+
 ## 0.3.1
 - **En tres idiomas: català, castellano e inglés.** La app usa el idioma del sistema (catalán, castellano, o inglés para cualquier otro idioma).
   - Traducidos la ventana, el menú de la bandeja o de la barra de menús, los avisos y errores, la página que se abre en el móvil (según el idioma del teléfono) y el aviso de macOS sobre la red local.

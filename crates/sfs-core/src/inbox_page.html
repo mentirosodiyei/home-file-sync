@@ -62,23 +62,61 @@ function add(files) {
   next();
 }
 
-function next() {
+// Subida por partes: cada parte es una petición pequeña (el enlace público
+// limita su tamaño) y, si se corta la conexión, se continúa desde lo recibido.
+const PART = 16 * 1024 * 1024;
+const base = location.pathname.replace(/\/$/, "") + "/upload";
+
+function sendPart(url, blob, onprogress) {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onprogress(e.loaded); };
+    xhr.onload = () => { let r = {}; try { r = JSON.parse(xhr.responseText); } catch (_) {} resolve({ status: xhr.status, r }); };
+    xhr.onerror = () => resolve({ status: 0, r: {} });
+    xhr.ontimeout = () => resolve({ status: 0, r: {} });
+    xhr.send(blob);
+  });
+}
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function upload(f, st, bar) {
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, "0")).join("");
+  const show = (done) => { const p = f.size ? Math.floor(done / f.size * 100) : 100; bar.style.width = p + "%"; st.textContent = p + " % · " + fmt(done); };
+  let offset = 0, failures = 0;
+  for (;;) {
+    const end = Math.min(offset + PART, f.size);
+    const url = base + "?name=" + encodeURIComponent(f.name) + "&id=" + id + "&offset=" + offset + "&total=" + f.size;
+    const { status, r } = await sendPart(url, f.slice(offset, end), (n) => show(offset + n));
+    if (status === 200 && r.ok) {
+      failures = 0;
+      if (r.name !== undefined) return { ok: true, name: r.name };
+      offset = r.have;
+      continue;
+    }
+    if (status === 409 && typeof r.have === "number" && r.have <= f.size) { offset = r.have; continue; }
+    if (status === 0 || status === 409 || status >= 502) {
+      // Sin conexión o corte momentáneo: se reintenta y se continúa donde se quedó.
+      if (++failures > 8) return { ok: false, error: T.noconn };
+      st.textContent = T.noconn + "…";
+      await wait(Math.min(1000 * failures, 5000));
+      continue;
+    }
+    return { ok: false, error: r.error || ("Error " + status) };
+  }
+}
+
+async function next() {
   if (busy || !queue.length) return;
   busy = true;
   const { f, li } = queue.shift();
   const st = li.querySelector(".st"), bar = li.querySelector(".bar i");
-  const xhr = new XMLHttpRequest();
-  xhr.open("POST", location.pathname.replace(/\/$/, "") + "/upload?name=" + encodeURIComponent(f.name));
-  xhr.upload.onprogress = (e) => { if (e.lengthComputable) { const p = Math.floor(e.loaded / e.total * 100); bar.style.width = p + "%"; st.textContent = p + " % · " + fmt(e.loaded); } };
-  xhr.onload = () => {
-    let r = {}; try { r = JSON.parse(xhr.responseText); } catch (_) {}
-    if (xhr.status === 200 && r.ok) { li.className = "ok"; bar.style.width = "100%"; st.textContent = T.sent; if (r.name !== f.name) st.textContent += T.as.replace("{}", r.name); }
-    else { li.className = "err"; st.textContent = r.error || ("Error " + xhr.status); }
-    busy = false; next();
-  };
-  xhr.onerror = () => { li.className = "err"; st.textContent = T.noconn; busy = false; next(); };
   st.textContent = T.sending;
-  xhr.send(f);
+  const res = await upload(f, st, bar);
+  if (res.ok) { li.className = "ok"; bar.style.width = "100%"; st.textContent = T.sent; if (res.name !== f.name) st.textContent += T.as.replace("{}", res.name); }
+  else { li.className = "err"; st.textContent = res.error; }
+  busy = false; next();
 }
 
 input.addEventListener("change", () => { add(input.files); input.value = ""; });

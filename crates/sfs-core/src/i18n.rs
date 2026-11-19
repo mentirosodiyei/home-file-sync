@@ -149,6 +149,101 @@ fn catalog() -> &'static HashMap<&'static str, (&'static str, &'static str)> {
 
 /// (castellano, català, English)
 pub const ENTRIES: &[(&str, &str, &str)] = &[
+    // Órdenes de las IA entre equipos
+    ("Ejecutando «{}», pedido por {}", "S'executa «{}», demanat per {}", "Running “{}”, requested by {}"),
+    ("El programa debe estar dentro de la carpeta compartida.", "El programa ha de ser dins la carpeta compartida.", "The program must be inside the shared folder."),
+    ("Esa orden ya no se está ejecutando.", "Aquesta ordre ja no s'està executant.", "That command is no longer running."),
+    ("Esa petición ya no está pendiente.", "Aquesta petició ja no està pendent.", "That request is no longer pending."),
+    ("Ese equipo no está en esta carpeta compartida.", "Aquest equip no és en aquesta carpeta compartida.", "That computer isn't in this shared folder."),
+    ("Este equipo no acepta órdenes de las IA en esta carpeta. Se activa en Home File Sync, en la carpeta, botón «IA».", "Aquest equip no accepta ordres de les IA en aquesta carpeta. S'activa a Home File Sync, a la carpeta, botó «IA».", "This computer doesn't accept commands from AI agents in this folder. Turn it on in Home File Sync: folder, “AI” button."),
+    ("Este equipo no tiene la carpeta disponible.", "Aquest equip no té la carpeta disponible.", "This computer doesn't have the folder available."),
+    ("Falta cerrar unas comillas en la orden.", "Falta tancar unes cometes a l'ordre.", "The command has unclosed quotes."),
+    ("La orden es demasiado larga.", "L'ordre és massa llarga.", "The command is too long."),
+    ("La orden está vacía.", "L'ordre és buida.", "The command is empty."),
+    ("La ruta del programa no es válida.", "La ruta del programa no és vàlida.", "The program path isn't valid."),
+    ("La subcarpeta no es válida.", "La subcarpeta no és vàlida.", "The subfolder isn't valid."),
+    ("La subcarpeta «{}» no existe en el otro equipo.", "La subcarpeta «{}» no existeix a l'altre equip.", "The subfolder “{}” doesn't exist on the other computer."),
+    ("No existe esa ejecución.", "No existeix aquesta execució.", "There's no such run."),
+    ("No se encuentra el programa «{}» en este equipo.", "No es troba el programa «{}» en aquest equip.", "The program “{}” can't be found on this computer."),
+    ("No se encuentra «{}» en la carpeta compartida.", "No es troba «{}» a la carpeta compartida.", "“{}” can't be found in the shared folder."),
+    ("No se ha podido ejecutar: {}", "No s'ha pogut executar: {}", "Couldn't run it: {}"),
+    ("Usa el nombre del programa o una ruta dentro de la carpeta compartida, no una ruta absoluta.", "Fes servir el nom del programa o una ruta dins la carpeta compartida, no una ruta absoluta.", "Use the program name or a path inside the shared folder, not an absolute path."),
+    ("cancelado por quien lo pidió", "cancel·lat per qui ho va demanar", "cancelled by whoever requested it"),
+    ("detenido", "aturat", "stopped"),
+    ("nadie lo ha aprobado a tiempo en el otro equipo", "ningú no ho ha aprovat a temps a l'altre equip", "nobody approved it in time on the other computer"),
+    ("no se han recibido todos los cambios a tiempo ({} archivo(s) pendientes; mira si hay errores de sincronización)", "no s'han rebut tots els canvis a temps ({} fitxer(s) pendents; mira si hi ha errors de sincronització)", "not all changes arrived in time ({} file(s) pending; check for sync errors)"),
+    ("rechazado en el otro equipo", "rebutjat a l'altre equip", "refused on the other computer"),
+    ("se ha perdido la conexión con {}", "s'ha perdut la connexió amb {}", "the connection with {} was lost"),
+    ("terminado por una señal", "acabat per un senyal", "terminated by a signal"),
+    ("tiempo límite agotado ({} s)", "temps límit esgotat ({} s)", "time limit reached ({} s)"),
+    ("{} pide ejecutar «{}». Apruébalo o recházalo en la carpeta, botón «IA».", "{} demana executar «{}». Aprova-ho o rebutja-ho a la carpeta, botó «IA».", "{} asks to run “{}”. Approve or refuse it in the folder, “AI” button."),
+    ("«{}» ha terminado con código {}", "«{}» ha acabat amb el codi {}", "“{}” finished with code {}"),
+    ("«{}» no acepta órdenes de las IA en esta carpeta. Hay que activarlo en ese equipo: carpeta, botón «IA».", "«{}» no accepta ordres de les IA en aquesta carpeta. Cal activar-ho en aquell equip: carpeta, botó «IA».", "“{}” doesn't accept commands from AI agents in this folder. It has to be turned on on that computer: folder, “AI” button."),
+    ("«{}» no está conectado ahora.", "«{}» no està connectat ara.", "“{}” isn't connected right now."),
+    ("«{}» no está entre las órdenes permitidas en este equipo.", "«{}» no és entre les ordres permeses en aquest equip.", "“{}” isn't one of the commands allowed on this computer."),
+    ("«{}» se ha detenido: {}", "«{}» s'ha aturat: {}", "“{}” stopped: {}"),
+    ("«{}» solo acepta estas órdenes: {}", "«{}» només accepta aquestes ordres: {}", "“{}” only accepts these commands: {}"),
+    ("«{}» tiene una versión de Home File Sync sin órdenes para las IA (o acaba de conectarse; vuelve a intentarlo en unos segundos).", "«{}» té una versió de Home File Sync sense ordres per a les IA (o s'acaba de connectar; torna-ho a provar d'aquí a uns segons).", "“{}” has a version of Home File Sync without AI commands (or has just connected; try again in a few seconds)."),
+    // Servicios externos (NAS, WebDAV, Google Drive, Dropbox)
+    ("el servicio externo no tiene espacio", "el servei extern no té espai", "the external service is out of space"),
+    ("el servicio no acepta el usuario o la contraseña (o la sesión ha caducado)", "el servei no accepta l'usuari o la contrasenya (o la sessió ha caducat)", "the service doesn't accept the user name or password (or the session has expired)"),
+    ("el servicio no da permiso ({})", "el servei no dona permís ({})", "the service doesn't allow it ({})"),
+    ("sin conexión con el servicio externo ({})", "sense connexió amb el servei extern ({})", "no connection with the external service ({})"),
+    ("Falta la contraseña o la sesión del servicio externo. Vuelve a configurarlo.", "Falta la contrasenya o la sessió del servei extern. Torna a configurar-lo.", "The external service's password or session is missing. Set it up again."),
+    ("No se puede escribir en el servicio externo: {}", "No es pot escriure al servei extern: {}", "Can't write to the external service: {}"),
+    ("Esta versión no incluye el inicio de sesión con {}.", "Aquesta versió no inclou l'inici de sessió amb {}.", "This version doesn't include signing in with {}."),
+    ("Hay otro inicio de sesión en curso (o el puerto {} está ocupado).", "Hi ha un altre inici de sessió en curs (o el port {} està ocupat).", "Another sign-in is in progress (or port {} is busy)."),
+    ("La sesión del servicio externo ha caducado o se ha retirado el permiso. Vuelve a iniciar sesión.", "La sessió del servei extern ha caducat o s'ha retirat el permís. Torna a iniciar la sessió.", "The external service session has expired or access was revoked. Sign in again."),
+    ("Listo. Ya puedes volver a Home File Sync.", "Fet. Ja pots tornar a Home File Sync.", "Done. You can go back to Home File Sync."),
+    ("No se ha completado el inicio de sesión a tiempo.", "No s'ha completat l'inici de sessió a temps.", "The sign-in wasn't completed in time."),
+    ("No se ha podido iniciar sesión. Vuelve a Home File Sync e inténtalo de nuevo.", "No s'ha pogut iniciar la sessió. Torna a Home File Sync i torna-ho a provar.", "Couldn't sign in. Go back to Home File Sync and try again."),
+    ("No se ha podido iniciar sesión: {}", "No s'ha pogut iniciar la sessió: {}", "Couldn't sign in: {}"),
+    ("Se ha cancelado el inicio de sesión.", "S'ha cancel·lat l'inici de sessió.", "The sign-in was cancelled."),
+    ("No se pudo guardar la contraseña en el almacén del sistema: {}", "No s'ha pogut desar la contrasenya al magatzem del sistema: {}", "Couldn't save the password in the system keychain: {}"),
+    ("El NAS no acepta el usuario o la contraseña.", "El NAS no accepta l'usuari o la contrasenya.", "The NAS doesn't accept the user name or password."),
+    ("El NAS no tiene una carpeta compartida llamada «{}».", "El NAS no té cap carpeta compartida anomenada «{}».", "The NAS has no shared folder called “{}”."),
+    ("Escribe el nombre de la carpeta compartida del NAS (p. ej. «Familia»).", "Escriu el nom de la carpeta compartida del NAS (p. ex. «Família»).", "Type the name of the NAS shared folder (e.g. “Family”)."),
+    ("Escribe la dirección del NAS: su IP (p. ej. 192.168.1.10) o su nombre.", "Escriu l'adreça del NAS: la seva IP (p. ex. 192.168.1.10) o el seu nom.", "Type the NAS address: its IP (e.g. 192.168.1.10) or its name."),
+    ("No se encuentra el NAS en {}. ¿Está encendido y en la misma red?", "No es troba el NAS a {}. Està encès i a la mateixa xarxa?", "The NAS can't be found at {}. Is it on and on the same network?"),
+    ("No se ha podido conectar con el NAS ({}).", "No s'ha pogut connectar amb el NAS ({}).", "Couldn't connect to the NAS ({})."),
+    ("Windows ya está conectado a ese NAS con otro usuario. Desconéctalo en el Explorador o usa el mismo usuario.", "Windows ja està connectat a aquest NAS amb un altre usuari. Desconnecta'l a l'Explorador o fes servir el mateix usuari.", "Windows is already connected to that NAS with another user. Disconnect it in File Explorer or use the same user."),
+    ("La dirección del servidor no es válida.", "L'adreça del servidor no és vàlida.", "The server address isn't valid."),
+    ("Usa una dirección https:// (sin cifrar, la contraseña viajaría a la vista).", "Fes servir una adreça https:// (sense xifrar, la contrasenya viatjaria a la vista).", "Use an https:// address (without encryption the password would travel in the clear)."),
+    // Enlace público (Cloudflare) para recibir desde fuera de casa
+    ("No se pudo iniciar el enlace público: {}", "No s'ha pogut iniciar l'enllaç públic: {}", "Couldn't start the public link: {}"),
+    (
+        "Cloudflare no ha dado un enlace. Comprueba la conexión a internet e inténtalo de nuevo.",
+        "Cloudflare no ha donat cap enllaç. Comprova la connexió a internet i torna-ho a provar.",
+        "Cloudflare didn't provide a link. Check the internet connection and try again.",
+    ),
+    ("El enlace público se ha cerrado.", "L'enllaç públic s'ha tancat.", "The public link has closed."),
+    ("El enlace público no está disponible en este sistema.", "L'enllaç públic no està disponible en aquest sistema.", "The public link isn't available on this system."),
+    ("No se pudo descargar cloudflared: {}", "No s'ha pogut baixar cloudflared: {}", "Couldn't download cloudflared: {}"),
+    ("Cancelado", "Cancel·lat", "Cancelled"),
+    ("sin conexión a internet o GitHub no responde", "sense connexió a internet o GitHub no respon", "no internet connection or GitHub isn't responding"),
+    (
+        "La descarga de cloudflared no supera la verificación; no se usará.",
+        "La baixada de cloudflared no supera la verificació; no es farà servir.",
+        "The cloudflared download failed verification; it won't be used.",
+    ),
+    // Relevo por servicio externo (nube o NAS)
+    ("No se encuentra la carpeta {}", "No es troba la carpeta {}", "Folder {} not found"),
+    ("El servicio externo debe estar fuera de la carpeta compartida.", "El servei extern ha de ser fora de la carpeta compartida.", "The external service folder must be outside the shared folder."),
+    ("No se puede escribir en {}: {}", "No es pot escriure a {}: {}", "Can't write to {}: {}"),
+    ("El servicio externo no está disponible.", "El servei extern no està disponible.", "The external service isn't available."),
+    (
+        "No se encuentra la carpeta del servicio externo ({}). ¿Está conectado el disco o abierta la app de la nube?",
+        "No es troba la carpeta del servei extern ({}). El disc està connectat i l'app del núvol, oberta?",
+        "The external service folder ({}) can't be found. Is the drive connected and the cloud app running?",
+    ),
+    ("«{}» se ha unido a través del servicio externo", "«{}» s'hi ha unit a través del servei extern", "“{}” joined through the external service"),
+    ("Guardado en el servicio externo: {}", "Desat al servei extern: {}", "Saved to the external service: {}"),
+    ("servicio externo", "servei extern", "external service"),
+    (
+        "Home File Sync guarda aquí, cifrados, los cambios para los equipos que no están conectados. Se borran solos cuando todos los han recibido. No modifiques ni borres estos archivos a mano, salvo la carpeta «old».",
+        "Home File Sync desa aquí, xifrats, els canvis per als equips que no estan connectats. S'esborren sols quan tots els han rebut. No modifiquis ni esborris aquests fitxers a mà, excepte la carpeta «old».",
+        "Home File Sync keeps changes here, encrypted, for computers that aren't connected. They're removed automatically once every computer has them. Don't change or delete these files by hand, except the “old” folder.",
+    ),
     // --- Carpetas y grupos ---
     ("No se puede preparar la carpeta: {}", "No es pot preparar la carpeta: {}", "The folder can't be prepared: {}"),
     ("Carpeta compartida creada", "Carpeta compartida creada", "Shared folder created"),
@@ -402,6 +497,12 @@ mod tests {
     fn every_marked_text_is_translated() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(root.join("src")).unwrap().flatten().map(|e| e.path()).collect();
+        // Subcarpetas (store/…).
+        let subdirs: Vec<std::path::PathBuf> = files.iter().filter(|p| p.is_dir()).cloned().collect();
+        files.retain(|p| p.is_file());
+        for d in subdirs {
+            files.extend(std::fs::read_dir(d).unwrap().flatten().map(|e| e.path()).filter(|p| p.is_file()));
+        }
         // También la aplicación de escritorio (bandeja, menús, diálogos).
         files.push(root.join("../../app/src-tauri/src/main.rs"));
         let mut missing = Vec::new();

@@ -12,6 +12,9 @@
 #   3. "Apple Development" del llavero (equipos propios)
 #   4. "-" firma ad hoc del paquete completo (identificador estable, menos fiable)
 set -euo pipefail
+# Identificadores de la app en Google y Dropbox (inicio de sesión), si existen.
+# Ver docs/REGISTRO-SERVICIOS.md. El archivo no se sube al repositorio.
+if [ -f "$(dirname "$0")/../.env.oauth" ]; then set -a; . "$(dirname "$0")/../.env.oauth"; set +a; fi
 cd "$(dirname "$0")/../app/src-tauri"
 
 # Sin rutas personales en los ejecutables (usuario, carpetas): el compilador

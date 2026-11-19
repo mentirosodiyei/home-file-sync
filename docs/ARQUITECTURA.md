@@ -205,6 +205,112 @@ Cada archivo tiene una entrada con estos campos: ruta (NFC, `/`), tamaño,
 - **Espacio en disco**: se comprueba antes de cada descarga.
 - **Keep-alive**: ping cada 10 s; una conexión sin tráfico durante 35 s se da por perdida (cable desconectado) y se reconecta automáticamente.
 
+## 8 bis. Relevo por un servicio externo (nube o NAS)
+
+Módulo `relay`. Sirve para que los cambios lleguen a un equipo que no está conectado cuando se producen: se dejan en un servicio externo y ese equipo los recoge al volver.
+
+**Dónde** (módulo `store`, interfaz `Store`: listar, leer, escribir, subir, mover, borrar). El relevo no sabe cuál usa:
+
+| Destino | Cómo |
+|---|---|
+| Carpeta (`Folder`) | Una carpeta del equipo: la de la app de Google Drive, Dropbox, OneDrive, Proton Drive, iCloud… o un disco. En cada equipo puede estar en una ruta distinta. |
+| NAS (`Smb`) | IP, carpeta compartida, usuario y contraseña. Se conecta con la función del sistema (NetFS en macOS, `WNetAddConnection2W` en Windows; la contraseña nunca va por línea de comandos) y después es una carpeta más. Si se desconecta, se vuelve a conectar en la siguiente vuelta. |
+| WebDAV (`WebDav`) | PROPFIND/GET/PUT/MOVE/DELETE/MKCOL con autenticación básica. Se exige `https://` salvo en direcciones de la red local. Las escrituras van a un temporal y se mueven. |
+| Google Drive (`GoogleDrive`) | OAuth con PKCE y permiso `drive.file` (no sensible): la app solo ve lo que crea, en «Mi unidad/Home File Sync». Todos los equipos con la misma cuenta. Subida reanudable por partes de 8 MiB. |
+| Dropbox (`Dropbox`) | OAuth con PKCE y acceso completo, para poder usar una carpeta compartida entre cuentas. Subida por sesión en partes de 32 MiB a partir de 140 MiB. |
+
+- Las contraseñas y los tokens de renovación se guardan en el almacén del sistema (`secrets`: Llavero de macOS, Administrador de credenciales de Windows), nunca en `settings.json` ni en el registro.
+- Inicio de sesión: la app abre el navegador; el servicio redirige a `http://127.0.0.1:47835/`, donde la app comprueba el `state`, recoge el código y lo cambia por el token. Los identificadores de la app en Google y Dropbox se fijan al compilar (ver `docs/REGISTRO-SERVICIOS.md`); sin ellos esas opciones no aparecen.
+- TLS del sistema (Security.framework en macOS, SChannel en Windows).
+
+```
+<servicio>/Home File Sync/
+  LEEME - README.txt
+  hfs-<id opaco>/          una por carpeta compartida
+    config.hfs             opciones comunes (qué hacer con lo entregado)
+    idx/<equipo>.hfs       índice publicado por cada equipo
+    blobs/<id>.hfs         contenido, uno por hash
+    old/<fecha>/           lo ya entregado, si se eligió conservarlo
+```
+
+- **Cifrado.** Todo va cifrado con una clave derivada de la del grupo (`BLAKE3 derive_key`): XChaCha20-Poly1305 en bloques de 1 MiB (construcción STREAM, con contador y marca de último bloque en el nonce, así que se detecta un archivo truncado o reordenado). Los nombres de archivo son opacos (`BLAKE3` con clave): el servicio no ve nombres, rutas, hashes ni ids de grupo. Un archivo de otro grupo o alterado no se descifra.
+- **Sin conflictos en el servicio.** Cada equipo escribe solo su propio índice; los blobs son inmutables y se nombran por su contenido (si dos equipos suben el mismo, da igual). Todo se escribe en un temporal y se renombra.
+- **Una fuente más.** El planificador de descargas trata los índices del relevo como los de un equipo conectado (salvo los de equipos en copia de seguridad, que solo reciben) y añade el relevo como fuente cuando el blob está allí. Por eso se aplican las mismas reglas de versiones, borrados, conflictos y `old/`, y el contenido se verifica con su hash BLAKE3 antes de colocarlo. Los equipos conectados tienen preferencia; el relevo se usa si ninguno lo sirve.
+- **Cuándo se sube.** Cada 20 s (o tras un cambio) cada equipo calcula, para cada versión vigente, qué equipos del relevo no la tienen según su índice publicado o el que envía por la red si está conectado. Solo sube lo que le falta a algún equipo **desconectado** y está en su disco. Antes de subir comprueba que el archivo no ha cambiado y que lo cifrado tiene el hash indexado.
+- **Destinatarios.** Solo cuentan los equipos que también usan el relevo (han publicado su índice en los últimos 30 días): un equipo que no lo usa no puede leerlo, así que no impide la limpieza. Cada equipo republica su índice al menos una vez al día.
+- **Limpieza.** Un blob se elimina (o se mueve a `old/<fecha>/`, según `config.hfs`, común a todos) cuando todos los destinatarios tienen esa versión o una posterior. Un blob que no corresponde a ningún índice conocido se espera 24 h, por si su índice aún no ha llegado desde la nube. Cualquier equipo puede limpiar; si dos lo hacen a la vez no pasa nada.
+- **Nube a medias.** Si un blob o un índice todavía no ha terminado de bajar de la nube, no se descifra y se reintenta más tarde.
+- Un equipo que publica en el relevo tiene la clave del grupo, así que se añade a la lista de miembros.
+
+## 8 ter. Enlace público para recibir desde fuera de casa
+
+Módulo `tunnel`. En la ventana de recepción, *Permitir enviar desde fuera de casa* abre un «Quick Tunnel» de Cloudflare (`cloudflared tunnel --url http://127.0.0.1:47830`): no necesita cuenta ni abrir puertos, y da una dirección `https://….trycloudflare.com` que se muestra en el QR.
+
+- `cloudflared` no va en el instalador. Se descarga la primera vez de la publicación oficial en GitHub (versión fijada) y solo se usa si su SHA-256 coincide con el fijado en el código: el del archivo descargado y, en macOS, también el del ejecutable que contiene (el que publica Cloudflare). Se guarda en la carpeta de datos de la app (`tools/`).
+- Se ejecuta con una configuración vacía, para que una configuración propia de cloudflared en el equipo no interfiera.
+- El enlace solo existe mientras la ventana de recepción está abierta y como mucho hasta que caduca la sesión (15 minutos). Sin el token de la sesión no se acepta nada.
+- La página sube los archivos por partes de 16 MB (`?id=&offset=&total=`), porque Cloudflare limita el tamaño de cada petición. Si se corta la conexión, la siguiente parte continúa desde lo recibido; una parte desordenada recibe `409` con la posición correcta. Las partes se guardan en temporales ligados al token y se borran al cerrar la sesión.
+- Entre el móvil y Cloudflare va por HTTPS; Cloudflare puede ver el contenido, como cualquier servicio en la nube, y la interfaz lo indica.
+
+## 8 quater. Órdenes de las IA entre equipos
+
+Objetivo: que una IA que programa en un equipo pueda compilar o probar en otro
+(Mac ↔ Windows) sin copiar nada a mano. Código en `crates/sfs-core/src/agent/`.
+
+```
+App de IA ──stdio MCP──► home-file-sync --mcp ──TCP 127.0.0.1 + token──► app (Hub)
+                                                                         │ extensión ExecReq
+                                                       conexión Noise de la carpeta compartida
+                                                                         ▼
+                                                    equipo que ejecuta: permiso → turno →
+                                                    espera de sincronización → proceso → salida
+```
+
+- **Servidor MCP** (`agent/mcp.rs`): JSON-RPC 2.0 por stdio, una línea por
+  mensaje. Es el propio binario de la app con `--mcp`, sin ventana ni registro
+  en la salida estándar. Cada llamada a una herramienta abre una conexión con
+  la app, así que la app puede abrirse después que la IA.
+- **Canal local** (`agent/control.rs`): la app escucha en `127.0.0.1` y deja en
+  su directorio de datos `agent.json` (permisos de usuario) con el puerto y un
+  token de 32 bytes. Sin el token no se atiende.
+- **Entre equipos**: extensiones nuevas al final de `Ext` (`Agent`, `ExecReq`,
+  `ExecEvent`, `ExecCancel`), que los equipos anteriores no decodifican y
+  descartan. Solo las envían miembros autenticados del grupo de la carpeta. Los
+  eventos se mandan por la conexión vigente del equipo; si se pierde del todo,
+  la orden se detiene y el que la pidió la marca como «sin conexión».
+- **Permiso**: lo decide solo el equipo que ejecuta, con sus ajustes locales
+  (`Settings.agent`), que nunca se reciben de otro equipo. Las órdenes de la
+  lista se comparan por prefijo de argumentos (`cargo test` permite
+  `cargo test --release`, no `cargo run`). Las demás esperan aprobación
+  5 minutos. Como mucho 2 a la vez por carpeta.
+- **Sin shell** (`agent/exec.rs`): programa y argumentos separados. El programa
+  es un nombre que se busca en el `PATH` (en macOS, el de la shell de inicio de
+  sesión del usuario, porque las apps de escritorio arrancan con uno mínimo) o
+  una ruta relativa que debe quedar dentro de la carpeta. En macOS/Linux el
+  proceso tiene su propio grupo y detenerlo envía `SIGTERM` y después
+  `SIGKILL` al grupo. En Windows se usa `taskkill /T` y `CREATE_NO_WINDOW`.
+- **Archivos al día**: el que pide fuerza un escaneo y espera a que termine
+  (también a que se estabilicen los archivos recién guardados), y después
+  envía la petición por la misma conexión que los cambios del índice, en orden.
+  El que ejecuta espera hasta que, para cada entrada del índice del otro, la
+  decisión sea «nada que hacer» (`transfer::behind`), como mucho 3 minutos. Al
+  terminar, el que ejecuta escanea lo generado antes de avisar. El que pidió
+  espera a recibirlo (hasta 60 s) antes de dar el resultado.
+- **Salida**: se envía en trozos cada 200 ms (máx. 8 MiB por ejecución). El que
+  pide guarda el último MiB; la IA recibe el final, sin códigos de color.
+
+### Proyectos de código (`ignore_rules.rs`)
+
+Sincronizar `.git` entre dos equipos que trabajan a la vez corrompe el
+repositorio, y las carpetas de compilación dependen del sistema. Con la opción
+de proyecto de código se aplican los `.gitignore` de cada subcarpeta (con el
+crate `ignore`, la misma semántica que git) y `.homefilesyncignore`. Además,
+nunca se sincronizan `.git`, `.hg`, `.svn` ni `.jj`. Las reglas valen en los
+dos sentidos: el escáner no indexa lo excluido y el planificador no descarga
+lo excluido aunque otro equipo lo anuncie. Una entrada que pasa a excluirse se
+retira del índice **sin** marca de borrado, así que nunca se borra en otro
+equipo.
+
 ## 9. Seguridad de rutas
 
 Toda ruta recibida por la red pasa por `validate_wire_path`. Se rechazan:

@@ -69,6 +69,19 @@ pub struct Settings {
     pub peer_addrs: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub mode: ShareMode,
+    /// Carpeta de un servicio externo (Google Drive, Dropbox, NAS…) que hace
+    /// de relevo cuando los demás equipos no están conectados.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay: Option<PathBuf>,
+    /// Dónde está el relevo (carpeta, NAS, WebDAV, Google Drive o Dropbox).
+    #[serde(default)]
+    pub relay_target: Option<crate::store::RelayTarget>,
+    /// Proyecto de código: respeta `.gitignore` y no sincroniza el repositorio.
+    #[serde(default)]
+    pub code_project: bool,
+    /// Qué pueden ejecutar en esta carpeta las IA de los otros equipos.
+    #[serde(default)]
+    pub agent: crate::agent::AgentPolicy,
 }
 
 impl Settings {
@@ -89,6 +102,10 @@ impl Settings {
                     manual_peers: Vec::new(),
                     peer_addrs: BTreeMap::new(),
                     mode: ShareMode::Sync,
+                    relay: None,
+                    relay_target: None,
+                    code_project: false,
+                    agent: Default::default(),
                 };
                 s.save(data_dir)?;
                 s
@@ -113,6 +130,10 @@ impl Settings {
             manual_peers: Vec::new(),
             peer_addrs: BTreeMap::new(),
             mode: ShareMode::Sync,
+            relay: None,
+            relay_target: None,
+            code_project: false,
+            agent: Default::default(),
         }
     }
 
@@ -150,15 +171,20 @@ pub fn default_device_name() -> String {
     "Equipo".to_string()
 }
 
+/// Ruta canónica. Windows devuelve rutas "\\?\C:\...": se simplifican si es
+/// posible, para que se puedan comparar con las carpetas guardadas.
+pub fn canonical(path: &Path) -> std::io::Result<PathBuf> {
+    let canon = std::fs::canonicalize(path)?;
+    Ok(match canon.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+        Some(s) if s.as_bytes().get(1) == Some(&b':') => PathBuf::from(s),
+        _ => canon,
+    })
+}
+
 /// Valida la carpeta elegida por el usuario. Rechaza carpetas peligrosas
 /// (raíz, carpeta de usuario completa, carpetas del sistema).
 pub fn check_folder(path: &Path) -> Result<PathBuf, String> {
-    let canon = std::fs::canonicalize(path).map_err(|e| tr!("No se puede abrir la carpeta: {}", e))?;
-    // Windows devuelve rutas "\\?\C:\...": las simplificamos si es posible.
-    let canon = match canon.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
-        Some(s) if s.as_bytes().get(1) == Some(&b':') => PathBuf::from(s),
-        _ => canon,
-    };
+    let canon = canonical(path).map_err(|e| tr!("No se puede abrir la carpeta: {}", e))?;
     if !canon.is_dir() {
         return Err(tr!("La ruta elegida no es una carpeta."));
     }

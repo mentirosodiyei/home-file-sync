@@ -16,7 +16,9 @@ Windows and macOS, no cloud, no accounts and no IP addresses to configure. To se
 - 📱 **Receive from your phone without installing anything.** The app shows a QR code; the phone scans it, picks photos or documents, and they arrive in the folder you chose.
 - 🏷️ **Your own names.** You can call each computer whatever you like ("Ana", "Living-room PC"…). Only you see that name.
 - 🔒 **Private and encrypted.** Files go straight from one computer to another over your network, encrypted; they never go through a server or the internet.
-- 🌍 **Away from home too**, through your own VPN (for example, WireGuard).
+- ☁️ **Even when the computers aren't on at the same time.** With a Google Drive, Dropbox, OneDrive or NAS folder, whatever a switched-off computer is missing is stored there encrypted and it picks it up when it's back. Once every computer has it, it's removed.
+- 🤖 **AI across computers.** Claude, Codex, Cursor, Gemini or any MCP-compatible AI can ask another computer of the folder to run the tests or the build —for example on the Windows PC while it works on the Mac— and get the result. You decide on each computer which commands it accepts.
+- 🌍 **Away from home too**, through your own VPN (for example, WireGuard), and you can receive files from someone who isn't at home with a temporary link.
 - 🗣️ **In English, Catalan and Spanish**, following the system language.
 
 ## How to use it
@@ -50,8 +52,45 @@ Click **📱 Receive from phone** and choose where incoming files go. Scan the Q
 - The link expires after 15 minutes and stops working when the window is closed.
 - It never overwrites a file: if one with that name already exists, it saves "(2)".
 - The phone page follows the phone's language.
+- **From outside home:** turn on *Allow sending from outside home* and the QR becomes a temporary `https://` link (through Cloudflare, no account) that works from anywhere while the window is open. The first time, the app downloads `cloudflared` from Cloudflare and checks its fingerprint before using it.
 
-### 4. Settings
+### 4. Cloud or NAS, for when the computers aren't on together
+
+On a shared folder click **☁︎ Cloud or NAS** and choose how to connect. Do it on each computer that should use it:
+
+| Option | What for |
+|---|---|
+| **Folder of the service's app** | Google Drive, Dropbox, OneDrive, Proton Drive, iCloud, pCloud… with its app installed. With different accounts, share the folder from the service itself. |
+| **Google Drive (sign in)** | Nothing to install. Every computer with the same Google account; the app only sees its own folder. |
+| **Dropbox (sign in)** | Nothing to install. For several accounts, share the folder from Dropbox and each person signs in with their own. |
+| **Home NAS (SMB)** | Address, shared folder, user name and password. The app connects (and reconnects) by itself. |
+| **WebDAV server** | Nextcloud, ownCloud, Infomaniak kDrive, pCloud, NAS… with user name and password. |
+
+Passwords and sessions are kept in the system keychain, not in the app.
+
+- If every computer is connected, it isn't used: files go straight over the network.
+- If one isn't, whatever it's missing is stored there **encrypted** (the service can't even see the names) and it downloads it when it's back.
+- Once every computer using that folder has it, it's **deleted** from the service. If you prefer, it's moved to an `old` folder on the service, which you'll have to empty by hand.
+
+<p align="center"><img src="docs/img/en/relevo.png" width="480" alt="Choosing a cloud or NAS folder"></p>
+
+### 5. AI across computers (Claude, Codex, Cursor…)
+
+If you code with an AI on one computer and need to test on another (for example, write on the Mac and build on Windows), share the project folder and press **🤖 AI** on it:
+
+- **It's a code project.** Follows `.gitignore` and doesn't sync `.git`: each computer keeps its own repository and build folders (`target/`, `node_modules/`…). Turn it on on every computer of the folder. Whatever becomes excluded is not deleted anywhere.
+- **Allow AI agents on the other computers to run commands here.** Off by default. You can list commands that run without asking (`cargo test`, `npm test`…; the app suggests the project's). Any other appears on the folder to **allow once, always, or refuse**. Commands run without a shell (no pipes or `&&`), as your user and inside the folder.
+- **Connect an AI on this computer.** Add Home File Sync as an MCP server in your AI app. The screen shows the exact command; for example, in Claude Code:
+
+  ```bash
+  claude mcp add --scope user home-file-sync -- "/Applications/Home File Sync.app/Contents/MacOS/home-file-sync" --mcp
+  ```
+
+  On Windows, the path is that of `home-file-sync.exe` in the install folder. For Codex: `codex mcp add home-file-sync -- <path> --mcp`. Claude Desktop, Cursor, Gemini CLI, LM Studio and the rest use the JSON block the app shows.
+
+The AI then gets the tools `list_machines`, `run_command`, `get_run`, `cancel_run` and `sync_now`. Before running, the other computer waits until it has all your changes; when it finishes, whatever the command generated comes back before the AI gets the result. Home File Sync must be open on both computers.
+
+### 6. Settings
 
 In **Settings** you can change this computer's name and allow VPN connections, to use the app away from home. **Advanced → Diagnostics** has a detailed connection log you can filter, copy and export.
 
@@ -98,10 +137,10 @@ Download the latest version from [Releases](../../releases).
 - All computers must be on the **same local network**. It works without internet.
 - Some hotel or guest Wi-Fi networks isolate devices from each other; the app tells you so on screen.
 - If a folder doesn't appear when joining, **Join with a code** has a **Manual connection** option to type the other computer's address.
-- **Away from home:** with a VPN that reaches your home network (WireGuard or another), turn on *Settings → Allow connections through VPN* and the laptop keeps syncing.
+- **Away from home:** with a VPN that reaches your home network (WireGuard or another), turn on *Settings → Allow connections through VPN* and the laptop keeps syncing. Without a VPN, the **cloud or NAS** delivers the changes when the other computer is back home.
 - Ports: 47820 (TCP, the first folder; each of the others uses a free port), 47821 (UDP, discovery), 5353 (mDNS) and 47830 (TCP, receiving from the phone).
 
-Receiving from the phone uses unencrypted HTTP inside your home network, because browsers don't accept a self-made certificate without warnings. Don't use it on public Wi-Fi.
+Receiving from the phone uses unencrypted HTTP inside your home network, because browsers don't accept a self-made certificate without warnings. Don't use it on public Wi-Fi. The link for sending from outside home does use HTTPS, but files go through Cloudflare's servers.
 
 More details (in Spanish) in [docs/RED.md](docs/RED.md) and [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md).
 

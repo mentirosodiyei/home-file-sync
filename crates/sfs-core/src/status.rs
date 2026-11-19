@@ -114,4 +114,8 @@ pub struct UiState {
     pub open_groups: Vec<OpenGroupView>,
     pub network_warning: Option<String>,
     pub mode: crate::settings::ShareMode,
+    /// Relevo por un servicio externo, si está configurado.
+    pub relay: Option<crate::relay::RelayView>,
+    /// Órdenes de las IA en esta carpeta.
+    pub agent: crate::agent::AgentView,
 }

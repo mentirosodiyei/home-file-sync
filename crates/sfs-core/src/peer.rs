@@ -429,6 +429,7 @@ pub(crate) async fn run_session(inner: Arc<Inner>, hs: Handshaken, remote: Strin
     // Los equipos de versiones anteriores las ignoran.
     let _ = ctrl_tx.send(Ext::Caps { version: EXT_VERSION, listen_port: inner.port, addrs: crate::netpath::own_addresses(inner.port) }.to_msg());
     inner.broadcast_members();
+    crate::agent::on_connect(&inner, &ctrl_tx);
 
     // Índice completo y estado actual.
     send_full_index(&ctrl_tx, inner.announced_entries());
@@ -453,6 +454,9 @@ pub(crate) async fn run_session(inner: Arc<Inner>, hs: Handshaken, remote: Strin
     uploads.close_all();
     handle.routes.lock().unwrap().clear();
     unregister(&inner, &remote, conn_id);
+    if inner.peers.lock().unwrap().get(&remote).is_none_or(|p| p.conn.is_none()) {
+        crate::agent::on_disconnect(&inner, &remote);
+    }
     if !inner.shutting_down.load(Ordering::SeqCst) {
         inner.event("net", tr!("Desconectado de {}", name));
     }
@@ -529,6 +533,7 @@ fn handle_ext(inner: &Arc<Inner>, remote: &str, observed: Option<SocketAddr>, ex
                 inner.learn_addr(remote, Candidate { addr: a, source: AddrSource::Reported });
             }
         }
+        Ext::Agent(_) | Ext::ExecReq(_) | Ext::ExecEvent { .. } | Ext::ExecCancel { .. } => crate::agent::handle_ext(inner, remote, ext),
         Ext::Members { members } => {
             for m in members.into_iter().take(EXT_MAX_MEMBERS) {
                 if m.id == inner.my_id || m.id == remote || m.id.len() != 32 || !m.id.bytes().all(|b| b.is_ascii_hexdigit()) {

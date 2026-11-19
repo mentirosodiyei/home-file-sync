@@ -12,7 +12,7 @@ Home File Sync no necesita configuración de red, pero sí que los equipos
 | Recepción desde el móvil (navegador) | TCP (HTTP) | 47830 |
 | Sincronización (cifrada) | TCP | 47820 para la primera carpeta; un puerto libre para cada una de las demás |
 
-No usa internet ni ningún servidor externo.
+Dentro de casa no usa internet ni ningún servidor externo. Solo lo usan dos funciones opcionales: la **nube o NAS de relevo**, que se limita a escribir archivos cifrados en una carpeta que ya sincroniza tu servicio, y el **enlace público** para recibir desde fuera de casa, que conecta con Cloudflare (salida HTTPS, sin abrir puertos).
 
 ## Mensajes que puede mostrar la aplicación
 
@@ -45,6 +45,11 @@ El descubrimiento automático no atraviesa una VPN, porque los túneles no trans
 3. Si el portátil ya se había conectado en casa, recuerda las direcciones de los demás y reconecta solo al activar la VPN. Si no, usa **Conexión manual** con la dirección de casa del equipo y el puerto de la carpeta, que aparecen en Ajustes.
 
 Con el ajuste desactivado, que es lo predeterminado, el equipo rechaza las conexiones que le llegan por un túnel y no comunica sus direcciones de VPN.
+
+## Fuera de casa sin VPN
+
+- **Equipos que no coinciden encendidos:** en cada carpeta compartida, *☁︎ Nube o NAS* permite elegir una carpeta de Google Drive, Dropbox, OneDrive o un NAS. Lo que le falta a un equipo desconectado se deja allí cifrado y lo recoge al volver.
+- **Recibir desde el móvil de alguien que no está en casa:** en la ventana de recepción, activa *Permitir enviar desde fuera de casa*. El QR pasa a ser un enlace `https://….trycloudflare.com` que funciona desde cualquier sitio mientras la ventana está abierta. Algunas redes o filtros de DNS bloquean `trycloudflare.com`; con datos móviles suele funcionar.
 
 ## Si el descubrimiento no funciona
 

@@ -16,7 +16,9 @@ Windows i macOS, sense núvol, sense comptes i sense configurar adreces IP. I pe
 - 📱 **Rebre des del mòbil sense instal·lar res.** L'app mostra un QR; el mòbil l'escaneja, tria les fotos o els documents i arriben a la carpeta que triïs.
 - 🏷️ **Noms al teu gust.** Pots anomenar cada equip com vulguis («Anna», «PC del menjador»…). Aquest nom només el veus tu.
 - 🔒 **Privat i xifrat.** Els fitxers van directament d'un equip a l'altre per la teva xarxa, xifrats; no passen per cap servidor ni per internet.
-- 🌍 **També fora de casa**, a través de la teva pròpia VPN (per exemple, WireGuard).
+- ☁️ **Encara que els equips no coincideixin encesos.** Amb una carpeta de Google Drive, Dropbox, OneDrive o el teu NAS, el que li falta a un equip apagat s'hi desa xifrat i el recull quan torna. Quan tots el tenen, s'esborra.
+- 🤖 **IA en diversos equips.** Claude, Codex, Cursor, Gemini o qualsevol IA compatible amb MCP pot demanar a un altre equip de la carpeta que executi les proves o la compilació —per exemple, al PC amb Windows mentre treballa al Mac— i rebre'n el resultat. Tu decideixes a cada equip quines ordres accepta.
+- 🌍 **També fora de casa**, a través de la teva pròpia VPN (per exemple, WireGuard), i es poden rebre fitxers d'algú que no és a casa amb un enllaç temporal.
 - 🗣️ **En català, castellà i anglès**, segons l'idioma del sistema.
 
 ## Com es fa servir
@@ -50,8 +52,45 @@ Prem **📱 Rep del mòbil** i tria on desar el que arribi. Escaneja el QR amb l
 - L'enllaç caduca als 15 minuts i deixa de funcionar en tancar la finestra.
 - Mai no sobreescriu un fitxer: si ja n'hi ha un amb aquest nom, desa «(2)».
 - La pàgina del mòbil surt en l'idioma del telèfon.
+- **Des de fora de casa:** activa *Permet enviar des de fora de casa* i el QR passa a ser un enllaç `https://` temporal (a través de Cloudflare, sense compte) que funciona des de qualsevol lloc mentre la finestra està oberta. La primera vegada l'app baixa `cloudflared` de Cloudflare i en comprova l'empremta abans de fer-lo servir.
 
-### 4. Configuració
+### 4. Núvol o NAS, per quan els equips no coincideixen
+
+En una carpeta compartida prem **☁︎ Núvol o NAS** i tria com connectar. Fes-ho a cada equip que vulguis que el faci servir:
+
+| Opció | Per a què |
+|---|---|
+| **Carpeta de l'app del servei** | Google Drive, Dropbox, OneDrive, Proton Drive, iCloud, pCloud… amb la seva app instal·lada. Amb comptes diferents, comparteix la carpeta des del mateix servei. |
+| **Google Drive (iniciar sessió)** | Sense instal·lar res. Tots els equips amb el mateix compte de Google; l'app només veu la seva carpeta. |
+| **Dropbox (iniciar sessió)** | Sense instal·lar res. Per a diversos comptes, comparteix la carpeta des de Dropbox i cadascú inicia sessió amb el seu. |
+| **NAS de casa (SMB)** | Adreça, carpeta compartida, usuari i contrasenya. L'app connecta sola (i reconnecta). |
+| **Servidor WebDAV** | Nextcloud, ownCloud, Infomaniak kDrive, pCloud, NAS… amb usuari i contrasenya. |
+
+Les contrasenyes i sessions es desen al clauer del sistema, no a l'app.
+
+- Si tots els equips estan connectats, no es fa servir: els fitxers van directament per la xarxa.
+- Si algun no ho està, el que li falta s'hi desa **xifrat** (el servei no en pot veure ni els noms) i el baixa quan torna.
+- Quan el tenen tots els equips que fan servir aquesta carpeta, s'**esborra** del servei. Si ho prefereixes, es mou a una carpeta `old` del servei, que hauràs de buidar a mà.
+
+<p align="center"><img src="docs/img/ca/relevo.png" width="480" alt="Triar una carpeta del núvol o del NAS"></p>
+
+### 5. IA en diversos equips (Claude, Codex, Cursor…)
+
+Si programes amb una IA en un equip i necessites provar en un altre (per exemple, escriure al Mac i compilar a Windows), comparteix la carpeta del projecte i prem **🤖 IA**:
+
+- **És un projecte de codi.** Respecta els `.gitignore` i no sincronitza `.git`: cada equip conserva el seu repositori i les seves carpetes de compilació (`target/`, `node_modules/`…). Activa-ho a tots els equips de la carpeta. El que passa a excloure's no s'esborra enlloc.
+- **Permetre que les IA dels altres equips hi executin ordres.** Està desactivat per defecte. Pots posar ordres que s'executen sense preguntar (`cargo test`, `npm test`…; l'app suggereix les del projecte). Les altres apareixen a la carpeta per **permetre-les un cop, sempre o rebutjar-les**. Les ordres s'executen sense intèrpret d'ordres (sense canonades ni `&&`), amb el teu usuari i dins la carpeta.
+- **Connectar una IA d'aquest equip.** Afegeix Home File Sync com a servidor MCP a la teva aplicació d'IA. La pantalla mostra l'ordre exacta; per exemple, a Claude Code:
+
+  ```bash
+  claude mcp add --scope user home-file-sync -- "/Applications/Home File Sync.app/Contents/MacOS/home-file-sync" --mcp
+  ```
+
+  A Windows, la ruta és la de `home-file-sync.exe` a la carpeta d'instal·lació. Per a Codex: `codex mcp add home-file-sync -- <ruta> --mcp`. Claude Desktop, Cursor, Gemini CLI, LM Studio i les altres fan servir el bloc JSON que mostra l'app.
+
+La IA té llavors les eines `list_machines`, `run_command`, `get_run`, `cancel_run` i `sync_now`. Abans d'executar, l'altre equip espera a tenir tots els teus canvis. En acabar, el que hagi generat l'ordre torna abans que la IA rebi el resultat. Home File Sync ha d'estar obert als dos equips.
+
+### 6. Configuració
 
 Des de **Configuració** es pot canviar el nom d'aquest equip i permetre les connexions per VPN, per fer servir l'app fora de casa. A **Avançat → Diagnòstic** hi ha un registre detallat de connexions que es pot filtrar, copiar i exportar.
 
@@ -98,10 +137,10 @@ Baixa l'última versió a [Releases](../../releases).
 - Tots els equips han de ser a la **mateixa xarxa local**. Funciona sense internet.
 - Algunes wifis d'hotels o de convidats aïllen els equips entre ells; l'app ho indica a la pantalla.
 - Si una carpeta no apareix en unir-s'hi, a «Uneix-m'hi amb un codi» hi ha una **Connexió manual** per escriure l'adreça de l'altre equip.
-- **Fora de casa:** amb una VPN que arribi a la xarxa de casa (WireGuard o una altra), activa *Configuració → Permet connexions per VPN* i el portàtil continuarà sincronitzant.
+- **Fora de casa:** amb una VPN que arribi a la xarxa de casa (WireGuard o una altra), activa *Configuració → Permet connexions per VPN* i el portàtil continuarà sincronitzant. Sense VPN, el **núvol o NAS** fa arribar els canvis quan l'altre equip torna a casa.
 - Ports: 47820 (TCP, la primera carpeta; cadascuna de les altres fa servir un port lliure), 47821 (UDP, detecció), 5353 (mDNS) i 47830 (TCP, recepció des del mòbil).
 
-La recepció des del mòbil fa servir HTTP sense xifrar dins de la xarxa de casa, perquè els navegadors no accepten sense avisos un certificat propi. No la facis servir en wifis públiques.
+La recepció des del mòbil fa servir HTTP sense xifrar dins de la xarxa de casa, perquè els navegadors no accepten sense avisos un certificat propi. No la facis servir en wifis públiques. L'enllaç per enviar des de fora de casa sí que va per HTTPS, però els fitxers passen pels servidors de Cloudflare.
 
 Més detalls (en castellà) a [docs/RED.md](docs/RED.md) i [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md).
 

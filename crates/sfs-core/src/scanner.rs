@@ -9,6 +9,7 @@
 //! El hash (BLAKE3) se calcula sin bloquear el índice y se comprueba que el
 //! archivo no cambió mientras se calculaba.
 
+use crate::ignore_rules::IgnoreRules;
 use crate::index::{FileEntry, LocalEntry, LocalIndex};
 use crate::pathsafe::{from_local, is_ignored_name, key_of, nfc, META_DIR};
 use crate::vv::VersionVector;
@@ -39,6 +40,8 @@ pub struct ScanOutcome {
     /// sustituido o el disco se ha desmontado dejando el punto de montaje
     /// vacío. No se interpreta como borrado de los archivos.
     pub meta_missing: bool,
+    /// Entradas retiradas del índice porque ahora están excluidas.
+    pub excluded: usize,
 }
 
 #[derive(Debug)]
@@ -54,6 +57,10 @@ pub struct Scanner {
     root: PathBuf,
     stable: Duration,
     observed: HashMap<String, (u64, i64, Instant)>,
+    /// Proyecto de código: se aplican `.gitignore` y se excluye el repositorio.
+    code_project: bool,
+    /// Reglas usadas en el último escaneo (también filtran lo que llega).
+    rules: Option<std::sync::Arc<IgnoreRules>>,
 }
 
 pub fn mtime_ns(meta: &std::fs::Metadata) -> i64 {
@@ -140,14 +147,44 @@ pub fn hash_reader(mut f: impl Read) -> std::io::Result<String> {
 
 impl Scanner {
     pub fn new(root: PathBuf, stable: Duration) -> Self {
-        Scanner { root, stable, observed: HashMap::new() }
+        Scanner { root, stable, observed: HashMap::new(), code_project: false, rules: None }
     }
 
-    fn walk(&self) -> (Vec<DiskFile>, bool) {
+    /// Activa o desactiva las reglas de proyecto de código.
+    pub fn set_code_project(&mut self, on: bool) {
+        self.code_project = on;
+        if !on {
+            self.rules = None;
+        }
+    }
+
+    /// Reglas del último escaneo (`None` si no es un proyecto de código).
+    pub fn rules(&self) -> Option<std::sync::Arc<IgnoreRules>> {
+        self.rules.clone()
+    }
+
+    fn walk(&mut self) -> (Vec<DiskFile>, bool) {
         let mut out = Vec::new();
         let mut complete = true;
+        let root = self.root.clone();
+        let mut rules = self.code_project.then(|| IgnoreRules::for_root(&root));
         let it = walkdir::WalkDir::new(&self.root).follow_links(false).into_iter().filter_entry(|e| {
-            e.depth() == 0 || e.file_name().to_str().map(|n| !is_ignored_name(n) && n != META_DIR).unwrap_or(false)
+            if e.depth() == 0 {
+                return true;
+            }
+            if !e.file_name().to_str().map(|n| !is_ignored_name(n) && n != META_DIR).unwrap_or(false) {
+                return false;
+            }
+            let Some(r) = rules.as_mut() else { return true };
+            let Some(rel) = from_local(&root, e.path()) else { return true };
+            let is_dir = e.file_type().is_dir();
+            if r.is_ignored(&rel, is_dir) {
+                return false;
+            }
+            if is_dir {
+                r.load_dir(&root, &rel);
+            }
+            true
         });
         for item in it {
             let item = match item {
@@ -173,6 +210,7 @@ impl Scanner {
                 rel,
             });
         }
+        self.rules = rules.map(std::sync::Arc::new);
         (out, complete)
     }
 
@@ -204,6 +242,16 @@ impl Scanner {
                 });
                 if !unchanged {
                     candidates.push(f);
+                }
+            }
+            // Lo que pasa a estar excluido deja de sincronizarse sin borrarse
+            // en ningún equipo: se retira del índice sin marca de borrado.
+            if let Some(r) = &self.rules {
+                let before = idx.entries.len();
+                idx.entries.retain(|k, e| seen.contains(k) || !r.is_ignored(&e.entry.path, false));
+                if idx.entries.len() != before {
+                    out.excluded = before - idx.entries.len();
+                    idx.dirty = true;
                 }
             }
             if complete {

@@ -7,6 +7,7 @@
 
 #[macro_use]
 pub mod i18n;
+pub mod agent;
 pub mod auth;
 pub mod decide;
 pub mod diag;
@@ -14,7 +15,12 @@ pub mod discovery;
 pub mod engine;
 pub mod fsops;
 pub mod hub;
+pub mod ignore_rules;
 pub mod inbox;
+pub mod relay;
+pub mod secrets;
+pub mod store;
+pub mod tunnel;
 pub mod index;
 pub mod netpath;
 pub mod pathsafe;

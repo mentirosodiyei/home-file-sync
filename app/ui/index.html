@@ -78,6 +78,109 @@
     </form>
   </div>
 
+  <!-- Nube o NAS (relevo) -->
+  <div class="sheet" id="sheet-relay" hidden>
+    <div class="sheet-head"><h2 data-i18n="relay.title"></h2><button class="link" data-close data-i18n="close"></button></div>
+    <div class="tab form">
+      <p class="muted" data-i18n="relay.help"></p>
+      <div class="relay-now" id="relay-now" hidden><span class="label" data-i18n="relay.now"></span><code id="relay-path"></code></div>
+      <div class="error" id="relay-error" hidden></div>
+      <p class="small muted" id="relay-busy" hidden></p>
+
+      <span class="label" data-i18n="relay.how"></span>
+      <fieldset class="modes relay-kinds">
+        <label class="mode"><input type="radio" name="relay-kind" value="folder" checked /><b data-i18n="relay.k_folder"></b><span data-i18n="relay.k_folder_help"></span></label>
+        <label class="mode"><input type="radio" name="relay-kind" value="gdrive" /><b data-i18n="relay.k_gdrive"></b><span data-i18n="relay.k_gdrive_help"></span></label>
+        <label class="mode"><input type="radio" name="relay-kind" value="dropbox" /><b data-i18n="relay.k_dropbox"></b><span data-i18n="relay.k_dropbox_help"></span></label>
+        <label class="mode"><input type="radio" name="relay-kind" value="smb" /><b data-i18n="relay.k_smb"></b><span data-i18n="relay.k_smb_help"></span></label>
+        <label class="mode"><input type="radio" name="relay-kind" value="webdav" /><b data-i18n="relay.k_webdav"></b><span data-i18n="relay.k_webdav_help"></span></label>
+      </fieldset>
+
+      <div class="relay-panel" data-kind="folder">
+        <p class="muted small" data-i18n="relay.folder_help"></p>
+        <p class="muted small" data-i18n="relay.folder_accounts"></p>
+        <div class="form-actions"><button type="button" class="primary" id="relay-pick" data-i18n="relay.pick"></button></div>
+      </div>
+      <div class="relay-panel" data-kind="gdrive" hidden>
+        <p class="muted small" data-i18n="relay.gdrive_note"></p>
+        <p class="error-text small" data-i18n="relay.unavailable_build" data-unavail="google" hidden></p>
+        <div class="form-actions"><button type="button" class="primary" data-login="gdrive" data-i18n="relay.login_google"></button></div>
+      </div>
+      <div class="relay-panel" data-kind="dropbox" hidden>
+        <label><span data-i18n="relay.dbx_path"></span><input id="relay-dbx-path" placeholder="/Home File Sync" spellcheck="false" /></label>
+        <p class="muted small" data-i18n="relay.dbx_note"></p>
+        <p class="error-text small" data-i18n="relay.unavailable_build" data-unavail="dropbox" hidden></p>
+        <div class="form-actions">
+          <button type="button" class="secondary" id="relay-dbx-save" data-i18n="relay.dbx_save" hidden></button>
+          <button type="button" class="primary" data-login="dropbox" data-i18n="relay.login_dropbox"></button>
+        </div>
+      </div>
+      <form class="relay-panel" data-kind="smb" id="relay-smb" autocomplete="off" hidden>
+        <div class="two-col">
+          <label><span data-i18n="relay.smb_host"></span><input id="smb-host" placeholder="192.168.1.10" spellcheck="false" autocapitalize="off" /></label>
+          <label><span data-i18n="relay.smb_share"></span><input id="smb-share" data-i18n-ph="relay.smb_share_ph" spellcheck="false" /></label>
+        </div>
+        <label><span data-i18n="relay.smb_sub"></span><input id="smb-sub" data-i18n-ph="relay.optional" spellcheck="false" /></label>
+        <div class="two-col">
+          <label><span data-i18n="relay.user"></span><input id="smb-user" spellcheck="false" autocapitalize="off" /></label>
+          <label><span data-i18n="relay.password"></span><input id="smb-pass" type="password" /></label>
+        </div>
+        <p class="muted small" data-i18n="relay.secret_note"></p>
+        <div class="form-actions"><button type="submit" class="primary" data-i18n="relay.connect"></button></div>
+      </form>
+      <form class="relay-panel" data-kind="webdav" id="relay-webdav" autocomplete="off" hidden>
+        <label><span data-i18n="relay.dav_url"></span><input id="dav-url" placeholder="https://nube.example.com/remote.php/dav/files/ana" spellcheck="false" autocapitalize="off" /></label>
+        <div class="two-col">
+          <label><span data-i18n="relay.user"></span><input id="dav-user" spellcheck="false" autocapitalize="off" /></label>
+          <label><span data-i18n="relay.password"></span><input id="dav-pass" type="password" /></label>
+        </div>
+        <p class="muted small" data-i18n="relay.dav_note"></p>
+        <p class="muted small" data-i18n="relay.secret_note"></p>
+        <div class="form-actions"><button type="submit" class="primary" data-i18n="relay.connect"></button></div>
+      </form>
+
+      <fieldset class="modes" id="relay-retention">
+        <span class="label" data-i18n="relay.retention"></span>
+        <label class="mode"><input type="radio" name="relay-keep" value="delete" checked /><b data-i18n="relay.delete"></b><span data-i18n="relay.delete_help"></span></label>
+        <label class="mode"><input type="radio" name="relay-keep" value="old" /><b data-i18n="relay.keep"></b><span data-i18n="relay.keep_help"></span></label>
+        <p class="muted small" data-i18n="relay.common"></p>
+      </fieldset>
+      <div class="form-actions"><button type="button" class="link danger-text" id="relay-remove" data-i18n="relay.remove"></button></div>
+    </div>
+  </div>
+
+  <!-- Órdenes de las IA -->
+  <div class="sheet" id="sheet-agent" hidden>
+    <div class="sheet-head"><h2 data-i18n="agent.title"></h2><button class="link" data-close data-i18n="close"></button></div>
+    <div class="tab form">
+      <p class="muted" data-i18n="agent.help"></p>
+      <div class="error" id="agent-error" hidden></div>
+      <label class="check"><input type="checkbox" id="agent-code" /> <span data-i18n="agent.code"></span></label>
+      <p class="muted small" data-i18n="agent.code_help"></p>
+
+      <h3 data-i18n="agent.here"></h3>
+      <label class="check"><input type="checkbox" id="agent-enabled" /> <span data-i18n="agent.enable"></span></label>
+      <p class="muted small" data-i18n="agent.enable_help"></p>
+      <div id="agent-policy">
+        <span class="label" data-i18n="agent.allowed"></span>
+        <ul class="plain agent-allowed" id="agent-allowed"></ul>
+        <form class="agent-add" id="agent-add" autocomplete="off">
+          <input id="agent-new" data-i18n-ph="agent.add_ph" spellcheck="false" autocapitalize="off" />
+          <button type="submit" class="secondary" data-i18n="agent.add"></button>
+        </form>
+        <div class="agent-suggest" id="agent-suggest"></div>
+        <label class="check"><input type="checkbox" id="agent-ask" /> <span data-i18n="agent.ask"></span></label>
+        <p class="muted small" data-i18n="agent.no_shell"></p>
+      </div>
+      <h3 data-i18n="agent.history"></h3>
+      <ul class="plain agent-history" id="agent-history"></ul>
+
+      <h3 data-i18n="agent.connect"></h3>
+      <p class="muted small" data-i18n="agent.connect_help"></p>
+      <div class="agent-snippets" id="agent-snippets"></div>
+    </div>
+  </div>
+
   <!-- Recibir del móvil -->
   <div class="sheet" id="sheet-receive" hidden>
     <div class="sheet-head"><h2 data-i18n="rx.title"></h2><button class="link" data-action="stop-receive" data-i18n="close"></button></div>
@@ -91,6 +194,11 @@
           <p class="muted small" id="rx-other"></p>
           <p class="muted small" id="rx-expiry"></p>
         </div>
+      </div>
+      <div class="rx-remote">
+        <label class="check"><input type="checkbox" id="rx-remote" /> <span data-i18n="rx.remote"></span></label>
+        <p class="muted small" data-i18n="rx.remote_help"></p>
+        <p class="small" id="rx-remote-status" hidden></p>
       </div>
       <h3 data-i18n="rx.received"></h3>
       <ul class="received" id="rx-list"></ul>

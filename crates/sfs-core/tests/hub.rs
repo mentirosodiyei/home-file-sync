@@ -219,6 +219,56 @@ async fn phone_can_send_files_through_the_qr_link() {
     assert!(!f.join("x").exists());
 }
 
+/// Subida por partes (la que usa la página del móvil): se reanuda tras un corte
+/// y no admite partes desordenadas.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn phone_upload_in_parts_resumes_after_a_cut() {
+    let mut casa = Home::new("Mac Casa").await;
+    let f = casa.folder();
+    let (id, _) = casa.hub.create_share("Familia", &f, ShareMode::Sync).await.unwrap();
+    let view = casa.hub.start_receive(Some(&id)).unwrap();
+    let token = view.url.rsplit('/').next().unwrap().to_string();
+    let port = casa.hub.inbox_port().unwrap();
+    let data: Vec<u8> = (0..30_000u32).map(|i| (i % 251) as u8).collect();
+    let post = |offset: usize, chunk: &[u8], declared: usize| {
+        let head = format!(
+            "POST /r/{token}/upload?name=V%C3%ADdeo.mov&id=abc123&offset={offset}&total={} HTTP/1.1\r\nContent-Length: {declared}\r\n\r\n",
+            data.len()
+        );
+        let body = chunk.to_vec();
+        async move { http(port, &head, &body).await }
+    };
+    // Primera parte.
+    let r = post(0, &data[..10_000], 10_000).await;
+    assert!(r.contains("\"have\":10000"), "{r}");
+    // Parte que no empieza donde toca: se indica desde dónde seguir.
+    let r = post(20_000, &data[20_000..], 10_000).await;
+    assert!(r.starts_with("HTTP/1.1 409") && r.contains("\"have\":10000"), "{r}");
+    // Corte a mitad de una parte: se conserva lo recibido.
+    {
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let head = format!("POST /r/{token}/upload?name=V%C3%ADdeo.mov&id=abc123&offset=10000&total={} HTTP/1.1\r\nContent-Length: 10000\r\n\r\n", data.len());
+        s.write_all(head.as_bytes()).await.unwrap();
+        s.write_all(&data[10_000..14_000]).await.unwrap();
+        s.flush().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let r = post(10_000, &data[10_000..20_000], 10_000).await;
+    assert!(r.starts_with("HTTP/1.1 409") && r.contains("\"have\":14000"), "{r}");
+    // Continúa desde ahí y termina.
+    let r = post(14_000, &data[14_000..], 16_000).await;
+    assert!(r.contains("\"name\":\"Vídeo.mov\""), "{r}");
+    assert_eq!(std::fs::read(f.join("Vídeo.mov")).unwrap(), data);
+    // Un archivo vacío también llega.
+    let head = format!("POST /r/{token}/upload?name=vacio.txt&id=e0&offset=0&total=0 HTTP/1.1\r\nContent-Length: 0\r\n\r\n");
+    assert!(http(port, &head, b"").await.contains("\"ok\":true"));
+    assert_eq!(std::fs::read(f.join("vacio.txt")).unwrap(), b"");
+    // Sin la recepción abierta no hay enlace público.
+    casa.hub.stop_receive();
+    assert!(casa.hub.set_receive_remote(true).is_err());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn shares_survive_restart() {
     let data = tempfile::tempdir().unwrap();
@@ -311,4 +361,50 @@ async fn vpn_connections_follow_the_setting() {
     casa.hub.set_listen_vpn(false);
     wait_for("sesión por VPN cerrada", 20, || casa.hub.snapshot().shares[0].state.devices.iter().all(|d| d.detail != "Sincronizado")).await;
     sfs_core::netpath::set_listen_vpn(false);
+}
+
+/// Enlace público real con Cloudflare: descarga cloudflared (verificado),
+/// abre el túnel y sube un archivo por HTTPS desde fuera. Necesita internet:
+/// `cargo test --test hub public_link -- --ignored`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "necesita internet (Cloudflare y GitHub)"]
+async fn public_link_through_cloudflare() {
+    let mut casa = Home::new("Mac Casa").await;
+    let f = casa.folder();
+    let (id, _) = casa.hub.create_share("Familia", &f, ShareMode::Sync).await.unwrap();
+    casa.hub.start_receive(Some(&id)).unwrap();
+    casa.hub.set_receive_remote(true).unwrap();
+    let mut url = String::new();
+    for _ in 0..240 {
+        let v = casa.hub.snapshot().receive.unwrap();
+        match v.remote.status.as_str() {
+            "ready" => {
+                url = v.url.clone();
+                break;
+            }
+            "error" => panic!("enlace público: {:?}", v.remote.error),
+            _ => tokio::time::sleep(Duration::from_millis(500)).await,
+        }
+    }
+    assert!(url.starts_with("https://") && url.contains(".trycloudflare.com/r/"), "{url}");
+    // El DNS del subdominio nuevo puede tardar unos segundos.
+    let mut ok = false;
+    for _ in 0..30 {
+        let out = std::process::Command::new("curl")
+            // DNS de Cloudflare: algunas redes no resuelven trycloudflare.com.
+            .args(["-sS", "-i", "--doh-url", "https://1.1.1.1/dns-query", "--max-time", "20", "-H", "Accept-Language: ca", "-X", "POST", "--data-binary", "hola des de fora"])
+            .arg(format!("{url}/upload?name=remot.txt&id=r1&offset=0&total=16"))
+            .output()
+            .unwrap();
+        eprintln!("curl: {} {}", String::from_utf8_lossy(&out.stderr).trim(), String::from_utf8_lossy(&out.stdout).lines().take(1).chain(String::from_utf8_lossy(&out.stdout).lines().last()).collect::<Vec<_>>().join(" … "));
+        if out.status.success() && String::from_utf8_lossy(&out.stdout).contains("\"ok\":true") {
+            ok = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    assert!(ok, "la subida por el enlace público no ha funcionado");
+    assert_eq!(std::fs::read(f.join("remot.txt")).unwrap(), b"hola des de fora");
+    casa.hub.stop_receive();
+    assert_eq!(casa.hub.snapshot().receive.map(|r| r.remote.status), None);
 }

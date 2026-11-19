@@ -7,8 +7,13 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util", "io-std", "fs", "process"] }
 snow = "0.9"
+chacha20poly1305 = "0.10"
+sha2 = "0.10"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "query", "native-tls", "http2"] }
+keyring = { version = "3", features = ["apple-native", "windows-native"] }
+quick-xml = "0.37"
 spake2 = "0.4"
 mdns-sd = "0.13"
 notify = "8"
@@ -24,6 +29,7 @@ socket2 = { version = "0.5", features = ["all"] }
 if-addrs = "0.13"
 fs4 = "0.13"
 walkdir = "2"
+ignore = "0.4"
 hex = "0.4"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 sys-locale = "0.3"
@@ -32,8 +38,15 @@ thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
+windows-sys = { version = "0.59", features = ["Win32_NetworkManagement_WNet", "Win32_Storage_FileSystem", "Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
 
 [dev-dependencies]
 tempfile = "3"
@@ -42,6 +55,9 @@ blake3 = "1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde_json = "1"
 tracing = "0.1"
+hyper-util = { version = "0.1.21", features = ["tokio"] }
+dav-server = "0.12"
+hyper = { version = "1", features = ["server", "http1"] }
 
 [features]
 # Solo Rust (sin C/ensamblador) en BLAKE3: útil para comprobar compilación cruzada.

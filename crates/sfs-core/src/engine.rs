@@ -53,6 +53,8 @@ pub struct EngineConfig {
     pub window: usize,
     /// Límite de velocidad de descarga (bytes/s). Solo para pruebas y diagnóstico.
     pub throttle_bytes_per_sec: Option<u64>,
+    /// Cada cuánto se revisa el relevo por servicio externo (segundos).
+    pub relay_secs: u64,
 }
 
 impl EngineConfig {
@@ -70,6 +72,7 @@ impl EngineConfig {
             block_size: 512 * 1024,
             window: 8,
             throttle_bytes_per_sec: None,
+            relay_secs: 20,
         }
     }
 }
@@ -86,6 +89,12 @@ pub(crate) struct FolderCtx {
     pub scan_tx: Mutex<Option<std::sync::mpsc::Sender<()>>>,
     pub root_error: Mutex<Option<String>>,
     pub scan_errors: Mutex<Vec<(String, String)>>,
+    /// Reglas de exclusión del último escaneo (proyecto de código).
+    pub rules: Mutex<Option<Arc<crate::ignore_rules::IgnoreRules>>>,
+    /// Escaneos completados (para esperar a que se vean los cambios recientes).
+    pub scan_gen: AtomicU64,
+    /// El último escaneo dejó archivos pendientes de estabilizarse.
+    pub last_unstable: AtomicBool,
     _watcher: Mutex<Option<notify::RecommendedWatcher>>,
 }
 
@@ -230,6 +239,11 @@ pub(crate) struct Inner {
     pub tasks: Mutex<Vec<AbortHandle>>,
     pub shutting_down: AtomicBool,
     pub last_status: Mutex<PeerStatus>,
+    /// Relevo por un servicio externo (nube o NAS).
+    pub relay: Mutex<crate::relay::RelayState>,
+    pub relay_wake: Notify,
+    /// Órdenes de las IA entre equipos.
+    pub agent: crate::agent::AgentState,
 }
 
 impl Inner {
@@ -405,6 +419,7 @@ impl Inner {
         if entries.is_empty() {
             return; // sin cambios: no despierta al planificador (evita un bucle activo)
         }
+        self.relay_wake.notify_one();
         if self.backup() {
             self.wake.notify_one();
             return;
@@ -503,6 +518,9 @@ impl Engine {
             tasks: Mutex::new(Vec::new()),
             shutting_down: AtomicBool::new(false),
             last_status: Mutex::new(PeerStatus::default()),
+            relay: Mutex::new(crate::relay::RelayState::default()),
+            relay_wake: Notify::new(),
+            agent: crate::agent::AgentState::new(),
             cfg,
         });
         // Direcciones aprendidas en sesiones anteriores.
@@ -554,6 +572,8 @@ impl Engine {
         inner.spawn(async move { status_loop(i).await });
         let i = inner.clone();
         inner.spawn(async move { maintenance_loop(i).await });
+        let i = inner.clone();
+        inner.spawn(async move { crate::relay::relay_loop(i).await });
 
         if inner.cfg.discovery {
             let (tx, rx) = mpsc::unbounded_channel();
@@ -634,6 +654,9 @@ impl Engine {
             scan_tx: Mutex::new(Some(tx.clone())),
             root_error: Mutex::new(root_error),
             scan_errors: Mutex::new(Vec::new()),
+            rules: Mutex::new(None),
+            scan_gen: AtomicU64::new(0),
+            last_unstable: AtomicBool::new(false),
             _watcher: Mutex::new(make_watcher(root, tx)),
         });
         *inner.folder.lock().unwrap() = Some(ctx.clone());
@@ -945,6 +968,8 @@ impl Engine {
     pub async fn shutdown(&self) {
         let inner = &self.inner;
         inner.shutting_down.store(true, Ordering::SeqCst);
+        // Detiene las órdenes de otros equipos que se estén ejecutando aquí.
+        crate::agent::shutdown(inner);
         if let Some(mut d) = inner.discovery.lock().unwrap().take() {
             d.stop();
         }
@@ -1032,7 +1057,12 @@ fn scanner_thread(inner: Arc<Inner>, ctx: Arc<FolderCtx>, rx: std::sync::mpsc::R
             break;
         }
         first = false;
+        scanner.set_code_project(inner.settings.lock().unwrap().code_project);
         let out = scanner.scan(&ctx.index, &inner.me());
+        *ctx.rules.lock().unwrap() = scanner.rules();
+        if out.excluded > 0 {
+            tracing::info!("{} archivo(s) excluidos por las reglas del proyecto: dejan de sincronizarse (no se borran en ningún equipo)", out.excluded);
+        }
         if out.meta_missing {
             tracing::warn!(
                 "Ha desaparecido la carpeta interna de {}: la carpeta se ha sustituido o el disco se ha desmontado. No se propaga ningún borrado; se vuelve a recibir lo que falte.",
@@ -1082,6 +1112,8 @@ fn scanner_thread(inner: Arc<Inner>, ctx: Arc<FolderCtx>, rx: std::sync::mpsc::R
             }
             inner.wake.notify_one();
         }
+        ctx.last_unstable.store(out.unstable, Ordering::SeqCst);
+        ctx.scan_gen.fetch_add(1, Ordering::SeqCst);
         wait = if out.unstable { quick } else { full };
     }
 }
@@ -1540,5 +1572,7 @@ fn build_snapshot(inner: &Inner) -> UiState {
         open_groups,
         network_warning,
         mode: s.mode,
+        relay: crate::relay::view(inner),
+        agent: crate::agent::view(inner),
     }
 }

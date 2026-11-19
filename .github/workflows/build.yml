@@ -44,6 +44,11 @@ jobs:
       - name: Empaquetar
         working-directory: app/src-tauri
         run: npx --yes @tauri-apps/cli@2 build ${{ matrix.args }}
+        env:
+          # Inicio de sesión con Google y Dropbox (opcional; ver docs/REGISTRO-SERVICIOS.md)
+          HFS_GOOGLE_CLIENT_ID: ${{ secrets.HFS_GOOGLE_CLIENT_ID }}
+          HFS_GOOGLE_CLIENT_SECRET: ${{ secrets.HFS_GOOGLE_CLIENT_SECRET }}
+          HFS_DROPBOX_APP_KEY: ${{ secrets.HFS_DROPBOX_APP_KEY }}
       - uses: actions/upload-artifact@v4
         with:
           name: home-file-sync-${{ matrix.os }}

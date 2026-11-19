@@ -111,6 +111,61 @@ pub enum Ext {
     /// que se les ha alcanzado. Permite conectar directamente aunque el
     /// descubrimiento no funcione entre algunos equipos.
     Members { members: Vec<MemberAddrs> },
+    // --- Órdenes de las IA (ver `agent`). Añadidas al final: los equipos
+    // anteriores no las reconocen y las ignoran. ---
+    /// Sistema del equipo y si acepta órdenes en esta carpeta.
+    Agent(AgentCaps),
+    /// Petición de ejecutar una orden en la carpeta compartida del otro equipo.
+    ExecReq(ExecReq),
+    /// Novedades de una ejecución (del equipo que ejecuta al que la pidió).
+    ExecEvent { run: u64, event: ExecEvent },
+    /// El que la pidió la cancela.
+    ExecCancel { run: u64 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentCaps {
+    pub version: u32,
+    /// `macos`, `windows`, `linux`…
+    pub os: String,
+    pub arch: String,
+    /// El equipo acepta órdenes de las IA en esta carpeta.
+    pub exec: bool,
+    /// Órdenes que se ejecutan sin preguntar.
+    pub allowed: Vec<String>,
+    /// Las demás órdenes se pueden aprobar en la pantalla del equipo.
+    pub ask: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecReq {
+    pub run: u64,
+    /// Programa y argumentos (sin intérprete de órdenes).
+    pub argv: Vec<String>,
+    /// Subcarpeta dentro de la carpeta compartida ("" = la raíz), con `/`.
+    pub subdir: String,
+    pub timeout_s: u32,
+    /// Quién lo pide: nombre de la aplicación de IA.
+    pub client: String,
+    /// Esperar a tener los cambios del que lo pide antes de ejecutar.
+    pub wait_sync: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExecEvent {
+    Queued,
+    /// Esperando a que alguien lo apruebe en la pantalla del equipo.
+    Approval,
+    /// Esperando a recibir los cambios del que lo pide.
+    Syncing { files: u32, bytes: u64 },
+    Started,
+    Output {
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    },
+    /// Fin: código de salida (`None` si se ha detenido), motivo y duración.
+    Done { code: Option<i32>, reason: Option<String>, duration_ms: u64, truncated: bool },
+    Refused { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -16,11 +16,12 @@ for L in $LANGS; do
   if [ "$L" = es ]; then D=docs/img; else D="docs/img/$L"; fi
   mkdir -p "$D"
   shot() { "$CH" --headless=new --disable-gpu --hide-scrollbars --force-device-scale-factor=2 --window-size="$2" --virtual-time-budget=3000 --screenshot="$PWD/$D/$1.png" "$3" >/dev/null 2>&1; }
-  shot principal     640,1190 "$U?lang=$L&demo=main"
+  shot principal     640,1300 "$U?lang=$L&demo=main"
   shot nueva-carpeta 640,760  "$U?lang=$L&demo=main&open=new"
   shot unirse        640,780  "$U?lang=$L&demo=main&open=join"
   shot recibir       640,600  "$U?lang=$L&demo=main&open=receive"
   shot ajustes       640,760  "$U?lang=$L&demo=main&open=settings"
+  shot relevo        640,620  "$U?lang=$L&demo=main&open=relay"
   # Página que ve el móvil, con envíos de ejemplo.
   case $L in
     es) DEV="Portátil de Papá"; SH="Pareja" ;;

@@ -26,6 +26,7 @@ fn cfg(data: &Path, name: &str) -> EngineConfig {
     c.stable_ms = 300;
     c.rescan_secs = 1;
     c.block_size = 64 * 1024;
+    c.relay_secs = 1;
     c
 }
 
@@ -525,4 +526,165 @@ async fn outsiders_are_rejected() {
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert!(outsider.files().is_empty());
     assert!(a.engine.snapshot().devices.iter().all(|d| d.name != "Cliente"));
+}
+
+fn relay_blobs(relay: &Path) -> Vec<PathBuf> {
+    let root = relay.join("Home File Sync");
+    let Ok(rd) = std::fs::read_dir(&root) else { return Vec::new() };
+    rd.flatten()
+        .filter(|e| e.path().is_dir())
+        .flat_map(|e| std::fs::read_dir(e.path().join("blobs")).into_iter().flatten().flatten().map(|b| b.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "hfs"))
+        .collect()
+}
+
+fn relay_old(relay: &Path) -> Vec<PathBuf> {
+    let root = relay.join("Home File Sync");
+    let mut v = Vec::new();
+    for share in std::fs::read_dir(&root).into_iter().flatten().flatten() {
+        for day in std::fs::read_dir(share.path().join("old")).into_iter().flatten().flatten() {
+            v.extend(std::fs::read_dir(day.path()).into_iter().flatten().flatten().map(|e| e.path()));
+        }
+    }
+    v
+}
+
+/// Dos equipos que nunca están encendidos a la vez se sincronizan a través
+/// de una carpeta de un servicio externo; lo que ya tienen todos se borra de ahí.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn relay_carries_changes_between_computers_that_are_never_online_together() {
+    let relay = tempfile::tempdir().unwrap();
+    let mut a = Node::new("Ana").await;
+    let mut b = Node::new("Bea").await;
+    group(&a, &[&b]).await;
+    a.engine.set_relay(Some(relay.path())).unwrap();
+    b.engine.set_relay(Some(relay.path())).unwrap();
+    wait_for("los dos usan el relevo", 20, || {
+        a.engine.snapshot().relay.is_some_and(|r| r.members == vec!["Bea".to_string()])
+            && b.engine.snapshot().relay.is_some_and(|r| r.members == vec!["Ana".to_string()])
+    })
+    .await;
+
+    // Bea se apaga; Ana crea un archivo: va cifrado al relevo.
+    b.engine.shutdown().await;
+    let secret = b"contenido privado que la nube no debe ver".repeat(4000);
+    a.write("fotos/viaje.txt", &secret);
+    wait_for("archivo en el relevo", 30, || relay_blobs(relay.path()).len() == 1).await;
+    let blob = std::fs::read(&relay_blobs(relay.path())[0]).unwrap();
+    assert!(!blob.windows(20).any(|w| w == &secret[..20]), "el relevo debe ir cifrado");
+    assert!(a.engine.snapshot().relay.unwrap().waiting.contains(&"Bea".to_string()));
+
+    // Ana se apaga y Bea vuelve: lo recibe del relevo, sin conexión con Ana.
+    a.engine.shutdown().await;
+    b.restart("Bea", |_| {}).await;
+    wait_for("Bea recibe del relevo", 30, || b.read("fotos/viaje.txt").as_deref() == Some(&secret[..])).await;
+    // Todos lo tienen: se borra del relevo.
+    wait_for("relevo vacío", 30, || relay_blobs(relay.path()).is_empty()).await;
+    assert!(relay_old(relay.path()).is_empty());
+
+    // Opción de conservar: lo entregado va a old/ en el servicio.
+    b.engine.set_relay_keep_old(true).unwrap();
+    b.write("nota.txt", b"para Ana");
+    wait_for("nota en el relevo", 30, || relay_blobs(relay.path()).len() == 1).await;
+    // Un borrado en Bea también viaja por el relevo.
+    std::fs::remove_file(b.root().join("fotos/viaje.txt")).unwrap();
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    b.engine.shutdown().await;
+    a.restart("Ana", |_| {}).await;
+    wait_for("Ana recibe la nota y el borrado", 30, || {
+        a.read("nota.txt").as_deref() == Some(&b"para Ana"[..]) && a.read("fotos/viaje.txt").is_none()
+    })
+    .await;
+    wait_for("nota movida a old/ del servicio", 30, || relay_blobs(relay.path()).is_empty() && relay_old(relay.path()).len() == 1).await;
+}
+
+/// Un equipo de copia de seguridad recibe por el relevo, pero lo suyo no se
+/// ofrece a los demás.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn relay_respects_backup_mode() {
+    let relay = tempfile::tempdir().unwrap();
+    let mut a = Node::new("Ana").await;
+    let mut b = Node::new("Copia").await;
+    group(&a, &[&b]).await;
+    b.engine.set_mode(sfs_core::settings::ShareMode::Backup);
+    a.engine.set_relay(Some(relay.path())).unwrap();
+    b.engine.set_relay(Some(relay.path())).unwrap();
+    wait_for("los dos usan el relevo", 20, || a.engine.snapshot().relay.is_some_and(|r| !r.members.is_empty())).await;
+    b.engine.shutdown().await;
+    a.write("doc.txt", b"original");
+    wait_for("en el relevo", 30, || relay_blobs(relay.path()).len() == 1).await;
+    a.engine.shutdown().await;
+    b.restart("Copia", |_| {}).await;
+    wait_for("la copia lo recibe", 30, || b.read("doc.txt").as_deref() == Some(&b"original"[..])).await;
+    b.write("solo-en-la-copia.txt", b"no debe viajar");
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    wait_for("relevo vacío (la copia no sube lo suyo)", 30, || relay_blobs(relay.path()).is_empty()).await;
+    b.engine.shutdown().await;
+    a.restart("Ana", |_| {}).await;
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert!(a.read("solo-en-la-copia.txt").is_none());
+    assert_eq!(a.read("doc.txt").as_deref(), Some(&b"original"[..]));
+}
+
+/// Servidor WebDAV de prueba (como un Nextcloud o un NAS) sobre una carpeta temporal.
+async fn webdav_server(dir: &Path) -> String {
+    use dav_server::{fakels::FakeLs, localfs::LocalFs, DavHandler};
+    use hyper::server::conn::http1;
+    use hyper::service::service_fn;
+    use hyper_util::rt::TokioIo;
+    let dav = DavHandler::builder().filesystem(LocalFs::new(dir, false, false, false)).locksystem(FakeLs::new()).build_handler();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://127.0.0.1:{}/", listener.local_addr().unwrap().port());
+    tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener.accept().await else { continue };
+            let dav = dav.clone();
+            tokio::spawn(async move {
+                let _ = http1::Builder::new()
+                    .serve_connection(
+                        TokioIo::new(stream),
+                        service_fn(move |req| {
+                            let dav = dav.clone();
+                            async move { Ok::<_, std::convert::Infallible>(dav.handle(req).await) }
+                        }),
+                    )
+                    .await;
+            });
+        }
+    });
+    url
+}
+
+/// Lo mismo que con una carpeta, pero el relevo es un servidor WebDAV con usuario y contraseña.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn relay_through_a_webdav_server() {
+    sfs_core::secrets::use_memory_store();
+    let served = tempfile::tempdir().unwrap();
+    let url = webdav_server(served.path()).await;
+    let mut a = Node::new("Ana").await;
+    let mut b = Node::new("Bea").await;
+    group(&a, &[&b]).await;
+    let target = sfs_core::store::RelayTarget::WebDav { url: url.clone(), user: "familia".into() };
+    for n in [&a, &b] {
+        let (e, t) = (n.engine.clone(), target.clone());
+        tokio::task::spawn_blocking(move || e.set_relay_target(Some(t), Some("contraseña"))).await.unwrap().unwrap();
+    }
+    wait_for("los dos usan el relevo WebDAV", 30, || {
+        a.engine.snapshot().relay.is_some_and(|r| r.ok && r.members == vec!["Bea".to_string()])
+            && b.engine.snapshot().relay.is_some_and(|r| r.ok && r.members == vec!["Ana".to_string()])
+    })
+    .await;
+    let view = a.engine.snapshot().relay.unwrap();
+    assert_eq!(view.kind, "webdav");
+    assert!(!view.path.contains("contraseña"), "la contraseña no se muestra");
+    assert!(!std::fs::read_to_string(a.data.path().join("settings.json")).unwrap().contains("contraseña"), "ni se guarda en los ajustes");
+
+    b.engine.shutdown().await;
+    let data = pseudo_random(3 * 1024 * 1024 + 17, 9); // varios bloques cifrados
+    a.write("vídeos/cumple.mov", &data);
+    wait_for("archivo en el servidor WebDAV", 30, || relay_blobs(served.path()).len() == 1).await;
+    a.engine.shutdown().await;
+    b.restart("Bea", |_| {}).await;
+    wait_for("Bea lo recibe del servidor", 40, || b.read("vídeos/cumple.mov").as_deref() == Some(&data[..])).await;
+    wait_for("se borra del servidor", 30, || relay_blobs(served.path()).is_empty()).await;
 }

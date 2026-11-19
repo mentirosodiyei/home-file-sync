@@ -33,7 +33,7 @@ use tokio::time::timeout;
 // Progreso
 // ---------------------------------------------------------------------------
 
-fn add_transfer(inner: &Inner, path: &str, peer: &str, download: bool, size: u64, done: u64) -> u64 {
+pub(crate) fn add_transfer(inner: &Inner, path: &str, peer: &str, download: bool, size: u64, done: u64) -> u64 {
     let id = inner.next_transfer.fetch_add(1, Ordering::Relaxed);
     inner.activity.lock().unwrap().transfers.insert(
         id,
@@ -42,7 +42,7 @@ fn add_transfer(inner: &Inner, path: &str, peer: &str, download: bool, size: u64
     id
 }
 
-fn progress(inner: &Inner, id: u64, done: u64, peer: Option<&str>) {
+pub(crate) fn progress(inner: &Inner, id: u64, done: u64, peer: Option<&str>) {
     let mut a = inner.activity.lock().unwrap();
     if let Some(t) = a.transfers.get_mut(&id) {
         t.done = done;
@@ -58,7 +58,7 @@ fn progress(inner: &Inner, id: u64, done: u64, peer: Option<&str>) {
     }
 }
 
-fn remove_transfer(inner: &Inner, id: u64) {
+pub(crate) fn remove_transfer(inner: &Inner, id: u64) {
     inner.activity.lock().unwrap().transfers.remove(&id);
 }
 
@@ -242,6 +242,55 @@ fn plan(inner: &Inner, folder: &FolderCtx) -> (Vec<Need>, Vec<Need>) {
             }
         }
     }
+    // Índices publicados en el relevo por equipos sin conexión (no los de
+    // copia de seguridad, que solo reciben). El contenido se puede bajar del
+    // relevo si ya está allí.
+    {
+        let peers = inner.peers.lock().unwrap();
+        let relay = inner.relay.lock().unwrap();
+        for (dev, o) in relay.others.iter() {
+            if o.backup || peers.get(dev).is_some_and(|p| p.conn.is_some() && p.index_ready) {
+                continue;
+            }
+            for (k, e) in &o.entries {
+                let src = if !e.deleted && relay.has_blob(&e.hash) { vec![crate::relay::RELAY_SOURCE.to_string()] } else { vec![] };
+                match best.get_mut(k) {
+                    None => {
+                        best.insert(k.clone(), (e.clone(), src));
+                    }
+                    Some((b, srcs)) => {
+                        if e.hash == b.hash && e.deleted == b.deleted {
+                            for s in src {
+                                if !srcs.contains(&s) {
+                                    srcs.push(s);
+                                }
+                            }
+                            if better(e, b) {
+                                let vv = b.vv.clone();
+                                *b = e.clone();
+                                b.vv.merge(&vv);
+                            } else {
+                                b.vv.merge(&e.vv);
+                            }
+                        } else if better(e, b) {
+                            *b = e.clone();
+                            *srcs = src;
+                        }
+                    }
+                }
+            }
+        }
+        // Una versión que llega por la red puede estar también en el relevo.
+        for (e, srcs) in best.values_mut() {
+            if !e.deleted && !srcs.iter().any(|s| s == crate::relay::RELAY_SOURCE) && relay.has_blob(&e.hash) {
+                srcs.push(crate::relay::RELAY_SOURCE.to_string());
+            }
+        }
+    }
+    // Proyecto de código: lo excluido no se descarga aunque otro lo anuncie.
+    if let Some(rules) = folder.rules.lock().unwrap().clone() {
+        best.retain(|_, (e, _)| !rules.is_ignored(&e.path, false));
+    }
     let mut needs = Vec::new();
     let mut deletes = Vec::new();
     let mut merged = Vec::new();
@@ -305,6 +354,42 @@ fn apply_delete(inner: &Inner, folder: &FolderCtx, need: &Need) -> Result<FileEn
     entry.vv.merge(&cur.entry.vv);
     idx.put(LocalEntry { entry: entry.clone(), disk: String::new(), disk_size: 0, disk_mtime_ns: 0 });
     Ok(entry)
+}
+
+/// Cuánto le falta a este equipo para tener todo lo que anuncia `peer`
+/// (archivos y bytes). `None` si aún no se conoce el índice de ese equipo.
+pub(crate) fn behind(inner: &Inner, peer: &str) -> Option<(u32, u64)> {
+    let folder = inner.folder()?;
+    if !folder.scanned_once.load(Ordering::SeqCst) {
+        return None;
+    }
+    let theirs: Vec<FileEntry> = {
+        let peers = inner.peers.lock().unwrap();
+        let p = peers.get(peer)?;
+        if p.conn.is_none() || !p.index_ready {
+            return None;
+        }
+        p.index.values().cloned().collect()
+    };
+    let rules = folder.rules.lock().unwrap().clone();
+    let backup = inner.backup();
+    let idx = folder.index.lock().unwrap();
+    let (mut files, mut bytes) = (0u32, 0u64);
+    for e in theirs {
+        if rules.as_ref().is_some_and(|r| r.is_ignored(&e.path, false)) {
+            continue;
+        }
+        match decide(idx.get(&e.key()).map(|l| &l.entry), &e) {
+            Action::Download | Action::DownloadConflict => {
+                files += 1;
+                bytes += e.size;
+            }
+            // En copia de seguridad los borrados no se aplican.
+            Action::Delete if !backup => files += 1,
+            _ => {}
+        }
+    }
+    Some((files, bytes))
 }
 
 pub(crate) async fn scheduler_loop(inner: Arc<Inner>) {
@@ -537,6 +622,22 @@ async fn download(inner: &Arc<Inner>, folder: &Arc<FolderCtx>, need: &Need, tid:
                     break;
                 }
                 Err(e) => last_err = Some(e),
+            }
+        }
+        // Si ningún equipo conectado lo sirve: del relevo (nube o NAS).
+        if !done && need.sources.iter().any(|s| s == crate::relay::RELAY_SOURCE) {
+            let (i, h, t) = (inner.clone(), need.remote.hash.clone(), temp.clone());
+            match tokio::task::spawn_blocking(move || crate::relay::fetch(&i, &h, &t, tid)).await {
+                Ok(Ok(())) => {
+                    done = true;
+                    tracing::info!("«{}» recibido del servicio externo", need.remote.path);
+                }
+                Ok(Err(msg)) => {
+                    // Puede que la nube aún no haya terminado de bajarlo: se reintenta.
+                    tracing::debug!("Relevo: «{}» aún no disponible: {msg}", need.remote.path);
+                    let _ = std::fs::remove_file(&temp);
+                }
+                Err(_) => {}
             }
         }
         if !done {

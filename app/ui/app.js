@@ -48,6 +48,8 @@ function render(s) {
   $("shares").innerHTML = s.shares.map(renderShare).join("");
   if (!$("sheet-receive").hidden) renderReceive(s.receive);
   if (!$("sheet-join").hidden) renderJoinInvites();
+  if (!$("sheet-relay").hidden) renderRelaySheet();
+  if (!$("sheet-agent").hidden) renderAgentSheet();
 }
 
 function renderShare(sh) {
@@ -91,6 +93,8 @@ function renderShare(sh) {
   const conflicts = sh.conflicts
     ? `<div class="banner conflict"><span>${esc(sh.conflicts === 1 ? t("share.conflict_one") : t("share.conflict_many", sh.conflicts))}</span><button class="link" data-action="ack" data-share="${sh.id}">${t("share.ok")}</button></div>`
     : "";
+  const relay = sh.relay ? renderRelayLine(sh) : "";
+  const agent = renderAgentLines(sh);
   const errors = sh.errors.slice(0, 5).map((e) => `<li>${e.path ? `<b>${esc(e.path)}</b>: ` : ""}${esc(e.message)}</li>`).join("");
 
   return `<article class="share card" data-share="${sh.id}">
@@ -104,18 +108,196 @@ function renderShare(sh) {
       <span class="actions-inline"><button class="link" data-action="open-folder" data-share="${sh.id}">${t("share.open")}</button><button class="link" data-action="change-folder" data-share="${sh.id}">${t("share.change")}</button></span></div>
     ${sh.folderError ? `<div class="banner error">${esc(sh.folderError)}</div>` : ""}
     ${pairing}
+    ${agent}
     <ul class="devices">${devices}</ul>
     <div class="summary">${parts.join("  ·  ")}</div>
+    ${relay}
     ${transfers ? `<ul class="transfers">${transfers}</ul>` : ""}
     ${conflicts}
     ${errors ? `<ul class="errors">${errors}</ul>` : ""}
     <div class="share-actions">
       <button class="secondary" data-action="invite" data-share="${sh.id}">${t("share.invite")}</button>
       <button class="secondary" data-action="toggle-mode" data-share="${sh.id}" data-mode="${sh.mode}">${backup ? t("share.to_sync") : t("share.to_backup")}</button>
+      ${sh.relay ? "" : `<button class="secondary" data-action="relay" data-share="${sh.id}">${t("relay.button")}</button>`}
+      <button class="secondary" data-action="agent" data-share="${sh.id}">${sh.agent && sh.agent.policy.enabled ? t("agent.button_on") : t("agent.button")}</button>
       <span class="spacer-flex"></span>
       <button class="link danger-text" data-action="leave" data-share="${sh.id}" data-name="${esc(name)}">${t("share.leave")}</button>
     </div>
   </article>`;
+}
+
+/** Peticiones de las IA pendientes de aprobar y órdenes en marcha (tarjeta de la carpeta). */
+function renderAgentLines(sh) {
+  const a = sh.agent;
+  if (!a) return "";
+  const who = (x) => (x.client ? t("agent.who_client", x.client, x.peer) : x.peer);
+  const ask = a.approvals
+    .map(
+      (x) => `<div class="agent-line ask"><span>🤖 ${esc(t("agent.asks", who(x)))} <code>${esc(x.command)}</code>${x.subdir ? ` <span class="muted small">${esc(t("agent.in_dir", x.subdir))}</span>` : ""}</span>
+        <span class="btns"><button class="primary" data-action="approve" data-answer="once" data-share="${sh.id}" data-peer="${esc(x.peerId)}" data-run="${esc(x.run)}">${t("agent.once")}</button>
+        <button class="secondary" data-action="approve" data-answer="always" data-share="${sh.id}" data-peer="${esc(x.peerId)}" data-run="${esc(x.run)}">${t("agent.always")}</button>
+        <button class="secondary" data-action="approve" data-answer="deny" data-share="${sh.id}" data-peer="${esc(x.peerId)}" data-run="${esc(x.run)}">${t("agent.deny")}</button></span></div>`
+    )
+    .join("");
+  const active = a.active
+    .map(
+      (x) => `<div class="agent-line"><span>🤖 ${esc(x.state === "running" ? t("agent.running", who(x)) : t("agent.waiting", who(x)))} <code>${esc(x.command)}</code></span>
+        <span class="btns"><button class="link danger-text" data-action="stop-run" data-share="${sh.id}" data-peer="${esc(x.peerId)}" data-run="${esc(x.run)}">${t("agent.stop")}</button></span></div>`
+    )
+    .join("");
+  return ask + active;
+}
+
+let agentShare = null;
+let agentSetup = null;
+
+function agentState() {
+  return state?.shares.find((x) => x.id === agentShare);
+}
+
+async function savePolicy(change) {
+  const sh = agentState();
+  if (!sh) return;
+  const p = { ...sh.agent.policy, ...change };
+  try {
+    $("agent-error").hidden = true;
+    await invoke("set_agent_policy", { id: sh.id, policy: p });
+    await refresh();
+  } catch (e) {
+    $("agent-error").hidden = false;
+    $("agent-error").textContent = String(e);
+  }
+}
+
+function resultText(r) {
+  if (r.state === "finished") return r.exitCode === 0 ? ["ok", "✓"] : r.exitCode == null ? ["bad", t("agent.r_stopped")] : ["bad", t("agent.r_code", r.exitCode)];
+  const text = { refused: t("agent.r_refused"), cancelled: t("agent.r_cancelled"), lost: t("agent.r_lost") }[r.state];
+  return ["bad", text || r.state];
+}
+
+function renderAgentSheet() {
+  const sh = agentState();
+  if (!sh || !sh.agent) return;
+  const a = sh.agent;
+  $("agent-code").checked = a.codeProject;
+  $("agent-enabled").checked = a.policy.enabled;
+  $("agent-ask").checked = a.policy.ask;
+  $("agent-policy").hidden = !a.policy.enabled;
+  $("agent-allowed").innerHTML = a.policy.allowed.length
+    ? a.policy.allowed.map((c, i) => `<li><code>${esc(c)}</code><button class="link danger-text" data-agent-remove="${i}">${t("agent.remove")}</button></li>`).join("")
+    : `<li class="empty-li small">${esc(t("agent.none_allowed"))}</li>`;
+  const sugg = a.suggestions.filter((x) => !a.policy.allowed.includes(x));
+  $("agent-suggest").innerHTML = sugg.length ? `<span class="muted small">${t("agent.suggest")}</span> ` + sugg.map((x) => `<button type="button" data-agent-suggest="${esc(x)}">＋ ${esc(x)}</button>`).join("") : "";
+  const fmt = new Intl.DateTimeFormat(LOCALE[LANG] || undefined, { hour: "2-digit", minute: "2-digit" });
+  $("agent-history").innerHTML = a.history.length
+    ? a.history
+        .map((r) => {
+          const [cls, res] = resultText(r);
+          const dir = r.incoming ? t("agent.from", r.peer) : t("agent.to", r.peer);
+          const sub = [r.client, r.reason, r.durationMs != null ? `${(r.durationMs / 1000).toFixed(1)} s` : ""].filter(Boolean).join(" · ");
+          return `<li><span class="dir">${esc(fmt.format(new Date(r.timeMs)))} ${esc(dir)}</span><code>${esc(r.command)}</code><span class="res ${cls}">${esc(res)}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ""}</li>`;
+        })
+        .join("")
+    : `<li class="muted small">${esc(t("agent.no_history"))}</li>`;
+  if (agentSetup && !$("agent-snippets").dataset.ready) {
+    const cmd = agentSetup.command;
+    const q = (x) => (/\s/.test(x) ? `"${x}"` : x);
+    const json = JSON.stringify({ mcpServers: { "home-file-sync": { command: cmd, args: ["--mcp"] } } }, null, 2);
+    const snips = [
+      ["Claude Code", `claude mcp add --scope user home-file-sync -- ${q(cmd)} --mcp`],
+      ["Codex", `codex mcp add home-file-sync -- ${q(cmd)} --mcp`],
+      [t("agent.json_title"), json],
+    ];
+    $("agent-snippets").innerHTML = snips
+      .map(([title, text], i) => `<div class="snip"><b>${esc(title)}<button class="link copy" data-agent-copy="${i}">${t("agent.copy")}</button></b><pre id="agent-snip-${i}">${esc(text)}</pre></div>`)
+      .join("");
+    $("agent-snippets").dataset.ready = "1";
+  }
+}
+
+/** Línea de estado del relevo (nube o NAS) en la tarjeta de la carpeta. */
+function relayStatus(r) {
+  if (r.error) return r.error;
+  if (!r.ok) return t("relay.unavailable");
+  const parts = [];
+  if (r.storedFiles) parts.push(t("relay.stored", r.storedFiles, bytes(r.storedBytes)));
+  if (r.waiting.length) parts.push(t("relay.for", r.waiting.join(", ")));
+  if (parts.length) return parts.join(" ");
+  return r.members.length ? t("relay.idle") : t("relay.alone");
+}
+
+function renderRelayLine(sh) {
+  const r = sh.relay;
+  return `<div class="relay-line ${r.error ? "error" : ""}"><span class="relay-icon">☁︎</span>
+    <div class="relay-info"><div><b>${t("relay.title")}</b> <code class="path">${esc(r.path)}</code></div>
+    <div class="muted small">${esc(relayStatus(r))}</div></div>
+    <button class="link" data-action="relay" data-share="${sh.id}">${t("relay.options")}</button></div>`;
+}
+
+let relayShare = null;
+let relayError = null;
+let relayBusy = null;
+let relayKind = null; // tipo elegido en el panel (null = el configurado)
+let relayAvail = { google: false, dropbox: false };
+
+function selectedKind() {
+  return document.querySelector('input[name="relay-kind"]:checked')?.value || "folder";
+}
+
+function showRelayPanel(kind) {
+  document.querySelectorAll(".relay-panel").forEach((el) => (el.hidden = el.dataset.kind !== kind));
+}
+
+function renderRelaySheet() {
+  const sh = state?.shares.find((x) => x.id === relayShare);
+  if (!sh) return;
+  const r = sh.relay;
+  $("relay-now").hidden = !r;
+  $("relay-path").textContent = r ? r.path : "";
+  const err = relayError || (r && (r.error || (!r.ok ? t("relay.unavailable") : null)));
+  $("relay-error").hidden = !err || !!relayBusy;
+  $("relay-error").textContent = err || "";
+  $("relay-busy").hidden = !relayBusy;
+  $("relay-busy").textContent = relayBusy || "";
+  const kind = relayKind || (r ? r.kind : "folder");
+  const radio = document.querySelector(`input[name="relay-kind"][value="${kind}"]`);
+  if (radio && !radio.checked) radio.checked = true;
+  showRelayPanel(kind);
+  document.querySelectorAll("[data-unavail]").forEach((el) => (el.hidden = relayAvail[el.dataset.unavail]));
+  document.querySelectorAll("[data-login]").forEach((b) => (b.disabled = !!relayBusy || !relayAvail[b.dataset.login === "gdrive" ? "google" : "dropbox"]));
+  $("relay-dbx-save").hidden = !(r && r.kind === "dropbox");
+  $("relay-retention").disabled = !(r && r.ok);
+  document.querySelector(`input[name="relay-keep"][value="${r && r.keepOld ? "old" : "delete"}"]`).checked = true;
+  $("relay-remove").hidden = !r;
+}
+
+/** Rellena los formularios con lo configurado (sin contraseñas). */
+function fillRelayForms(r) {
+  const tg = r?.target || {};
+  $("smb-host").value = tg.kind === "smb" ? tg.host : "";
+  $("smb-share").value = tg.kind === "smb" ? tg.share : "";
+  $("smb-sub").value = tg.kind === "smb" ? tg.subpath || "" : "";
+  $("smb-user").value = tg.kind === "smb" ? tg.user : "";
+  $("dav-url").value = tg.kind === "webDav" || tg.kind === "webdav" ? tg.url : "";
+  $("dav-user").value = tg.kind === "webDav" || tg.kind === "webdav" ? tg.user : "";
+  $("dav-pass").value = "";
+  $("smb-pass").value = "";
+  $("relay-dbx-path").value = tg.kind === "dropbox" ? tg.path : "/Home File Sync";
+}
+
+async function relayDo(busyText, fn) {
+  relayError = null;
+  relayBusy = busyText;
+  renderRelaySheet();
+  try {
+    await fn();
+    relayKind = null;
+  } catch (e) {
+    relayError = String(e);
+  } finally {
+    relayBusy = null;
+    await refresh();
+  }
 }
 
 async function refresh() {
@@ -198,6 +380,20 @@ function renderReceive(rx) {
   $("rx-url").textContent = rx.url;
   $("rx-other").textContent = rx.otherUrls.length ? t("rx.other", rx.otherUrls.join("  ·  ")) : "";
   $("rx-expiry").textContent = t("rx.expiry", rx.label, Math.ceil(rx.expiresInSecs / 60));
+  const rm = rx.remote || { status: "off" };
+  const on = rm.status !== "off";
+  if (!rxRemoteBusy) $("rx-remote").checked = on && rm.status !== "error" ? true : rxRemoteWanted && rm.status !== "off";
+  const st = $("rx-remote-status");
+  const msg = {
+    downloading: t("rx.remote_downloading", Math.floor((rm.progress || 0) * 100)),
+    starting: t("rx.remote_starting"),
+    ready: t("rx.remote_ready", rx.localUrl),
+    error: rm.error,
+  }[rm.status];
+  st.hidden = !msg;
+  st.textContent = msg || "";
+  st.className = "small " + (rm.status === "error" ? "error-text" : rm.status === "ready" ? "ok-text" : "muted");
+  if (rm.status === "ready") $("rx-other").textContent = "";
   $("rx-list").innerHTML = rx.received.length
     ? rx.received.map((f) => `<li>✓ ${esc(f.name)} <span class="muted">${bytes(f.size)}</span></li>`).join("")
     : `<li class="muted">${t("rx.nothing")}</li>`;
@@ -213,7 +409,26 @@ async function startReceive(share) {
   renderReceive(await invoke("start_receive", { share: sel.value || null }));
 }
 
-$("rx-dest").addEventListener("change", async (e) => renderReceive(await invoke("start_receive", { share: e.target.value || null })));
+$("rx-dest").addEventListener("change", async (e) => {
+  renderReceive(await invoke("start_receive", { share: e.target.value || null }));
+  if (rxRemoteWanted) await invoke("set_receive_remote", { on: true }).catch(() => {});
+});
+
+let rxRemoteWanted = false;
+let rxRemoteBusy = false;
+$("rx-remote").addEventListener("change", async (e) => {
+  rxRemoteWanted = e.target.checked;
+  rxRemoteBusy = true;
+  try {
+    await invoke("set_receive_remote", { on: rxRemoteWanted });
+  } catch (err) {
+    $("rx-remote-status").hidden = false;
+    $("rx-remote-status").textContent = String(err);
+  } finally {
+    rxRemoteBusy = false;
+  }
+  refresh();
+});
 
 // ---------------------------------------------------------------------------
 // Acciones
@@ -238,8 +453,34 @@ const actions = {
     return startReceive(b.dataset.share);
   },
   async "stop-receive"() {
+    rxRemoteWanted = false;
     await invoke("stop_receive");
     closeSheets();
+  },
+  async relay(b) {
+    relayShare = b.dataset.share;
+    relayError = null;
+    relayKind = null;
+    try { relayAvail = (await invoke("relay_options")) || relayAvail; } catch (_) {}
+    fillRelayForms(state?.shares.find((x) => x.id === relayShare)?.relay);
+    renderRelaySheet();
+    openSheet("sheet-relay");
+  },
+  async agent(b) {
+    agentShare = b.dataset.share;
+    $("agent-error").hidden = true;
+    $("agent-new").value = "";
+    if (!agentSetup) {
+      try { agentSetup = await invoke("agent_setup"); } catch (_) {}
+    }
+    renderAgentSheet();
+    openSheet("sheet-agent");
+  },
+  async approve(b) {
+    await invoke("approve_run", { id: b.dataset.share, peerId: b.dataset.peer, run: b.dataset.run, answer: b.dataset.answer });
+  },
+  async "stop-run"(b) {
+    await invoke("stop_incoming", { id: b.dataset.share, peerId: b.dataset.peer, run: b.dataset.run });
   },
   async invite(b) {
     await invoke("open_invite", { id: b.dataset.share });
@@ -416,9 +657,100 @@ async function loadNetwork() {
   }
 }
 
+$("relay-pick").addEventListener("click", () => relayDo(null, () => invoke("pick_relay", { id: relayShare })));
+document.querySelectorAll('input[name="relay-kind"]').forEach((el) =>
+  el.addEventListener("change", () => {
+    relayKind = el.value;
+    relayError = null;
+    renderRelaySheet();
+  })
+);
+document.querySelectorAll("[data-login]").forEach((b) =>
+  b.addEventListener("click", () =>
+    relayDo(t("relay.waiting_browser"), () =>
+      invoke("relay_login", { id: relayShare, provider: b.dataset.login, path: b.dataset.login === "dropbox" ? $("relay-dbx-path").value : null })
+    )
+  )
+);
+$("relay-dbx-save").addEventListener("click", () => {
+  const r = state?.shares.find((x) => x.id === relayShare)?.relay;
+  relayDo(t("relay.connecting"), () => invoke("relay_set_dropbox_path", { id: relayShare, account: r?.target?.account || "", path: $("relay-dbx-path").value }));
+});
+$("relay-smb").addEventListener("submit", (e) => {
+  e.preventDefault();
+  relayDo(t("relay.connecting"), () =>
+    invoke("relay_set_smb", { id: relayShare, host: $("smb-host").value, share: $("smb-share").value, subpath: $("smb-sub").value, user: $("smb-user").value, password: $("smb-pass").value || null })
+  ).then(() => ($("smb-pass").value = ""));
+});
+$("relay-webdav").addEventListener("submit", (e) => {
+  e.preventDefault();
+  relayDo(t("relay.connecting"), () => invoke("relay_set_webdav", { id: relayShare, url: $("dav-url").value, user: $("dav-user").value, password: $("dav-pass").value || null })).then(
+    () => ($("dav-pass").value = "")
+  );
+});
+document.querySelectorAll('input[name="relay-keep"]').forEach((el) =>
+  el.addEventListener("change", async () => {
+    try {
+      relayError = null;
+      await invoke("set_relay_keep_old", { id: relayShare, keepOld: el.value === "old" });
+    } catch (e) {
+      relayError = String(e);
+    }
+    await refresh();
+  })
+);
+$("relay-remove").addEventListener("click", async () => {
+  if (!(await ask(t("relay.ask_remove"), { ok: t("relay.remove"), danger: true }))) return;
+  await invoke("clear_relay", { id: relayShare });
+  closeSheets();
+});
+
 $("vpn-toggle").addEventListener("change", async (e) => {
   await invoke("set_listen_vpn", { on: e.target.checked });
   loadNetwork();
+});
+
+// Órdenes de las IA (panel de la carpeta)
+$("agent-enabled").addEventListener("change", async (e) => {
+  if (e.target.checked && !(await ask(t("agent.ask_enable"), { ok: t("agent.enable_ok") }))) {
+    e.target.checked = false;
+    return;
+  }
+  savePolicy({ enabled: e.target.checked });
+});
+$("agent-ask").addEventListener("change", (e) => savePolicy({ ask: e.target.checked }));
+$("agent-code").addEventListener("change", async (e) => {
+  const sh = agentState();
+  if (sh) await invoke("set_code_project", { id: sh.id, on: e.target.checked });
+  refresh();
+});
+$("agent-add").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const v = $("agent-new").value.trim();
+  const sh = agentState();
+  if (!v || !sh) return;
+  $("agent-new").value = "";
+  savePolicy({ allowed: [...sh.agent.policy.allowed, v] });
+});
+$("sheet-agent").addEventListener("click", async (e) => {
+  const sh = agentState();
+  const rm = e.target.closest("[data-agent-remove]");
+  if (rm && sh) savePolicy({ allowed: sh.agent.policy.allowed.filter((_, i) => i !== Number(rm.dataset.agentRemove)) });
+  const sg = e.target.closest("[data-agent-suggest]");
+  if (sg && sh) savePolicy({ allowed: [...sh.agent.policy.allowed, sg.dataset.agentSuggest] });
+  const cp = e.target.closest("[data-agent-copy]");
+  if (cp) {
+    try {
+      await navigator.clipboard.writeText($("agent-snip-" + cp.dataset.agentCopy).textContent);
+      cp.textContent = t("agent.copied");
+      setTimeout(() => (cp.textContent = t("agent.copy")), 1500);
+    } catch (_) {
+      const r = document.createRange();
+      r.selectNodeContents($("agent-snip-" + cp.dataset.agentCopy));
+      getSelection().removeAllRanges();
+      getSelection().addRange(r);
+    }
+  }
 });
 
 function selectTab(tab) {
@@ -485,7 +817,7 @@ const LOCALE = { es: "es-ES", ca: "ca-ES", en: "en-GB" };
 
 if (!window.__TAURI__) {
   const open = new URLSearchParams(location.search).get("open");
-  const demo = { join: () => actions.join(), new: () => actions["new-share"](), receive: () => startReceive("a"), settings: () => openSettings("general") };
+  const demo = { join: () => actions.join(), new: () => actions["new-share"](), receive: () => startReceive("a"), settings: () => openSettings("general"), relay: () => actions.relay({ dataset: { share: "b" } }), agent: () => actions.agent({ dataset: { share: "d" } }) };
   if (demo[open]) setTimeout(async () => {
     await refresh();
     await demo[open]();
@@ -502,9 +834,9 @@ var DEMO_QR = '<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="246"
 // Datos de ejemplo en el idioma de la interfaz (para las capturas).
 var DEMO = {
   names: {
-    es: { me: "Portátil de Papá", mom: "Mamá", couple: "Pareja", dadson: "Papá e hijo", leo: "PC de Leo", backup: "Copia del salón", imac: "iMac Salón", tablet: "Tablet Salón", recipes: "Recetas", home: "/Users/papa", disk: "/Volumes/Disco/Copias", video: "Vacaciones/IMG_2041.MOV", bill: "Recibo luz octubre.pdf", ok: "Sincronizado", off: "Desconectado", dest: "la carpeta compartida «{}»" },
-    ca: { me: "Portàtil del Papa", mom: "Mama", couple: "Parella", dadson: "Papa i fill", leo: "PC del Leo", backup: "Còpia del menjador", imac: "iMac Menjador", tablet: "Tauleta Menjador", recipes: "Receptes", home: "/Users/papa", disk: "/Volumes/Disc/Copies", video: "Vacances/IMG_2041.MOV", bill: "Rebut llum octubre.pdf", ok: "Sincronitzat", off: "Desconnectat", dest: "la carpeta compartida «{}»" },
-    en: { me: "Dad's Laptop", mom: "Mom", couple: "Couple", dadson: "Dad & son", leo: "Leo's PC", backup: "Living-room backup", imac: "Living-room iMac", tablet: "Living-room tablet", recipes: "Recipes", home: "/Users/dad", disk: "/Volumes/Disk/Backups", video: "Holidays/IMG_2041.MOV", bill: "Electricity bill October.pdf", ok: "Up to date", off: "Offline", dest: "the shared folder “{}”" },
+    es: { me: "Portátil de Papá", mom: "Mamá", couple: "Pareja", dadson: "Papá e hijo", leo: "PC de Leo", backup: "Copia del salón", imac: "iMac Salón", tablet: "Tablet Salón", recipes: "Recetas", home: "/Users/papa", disk: "/Volumes/Disco/Copias", video: "Vacaciones/IMG_2041.MOV", bill: "Recibo luz octubre.pdf", ok: "Sincronizado", off: "Desconectado", project: "Proyecto web", pc: "PC Windows", dest: "la carpeta compartida «{}»" },
+    ca: { me: "Portàtil del Papa", mom: "Mama", couple: "Parella", dadson: "Papa i fill", leo: "PC del Leo", backup: "Còpia del menjador", imac: "iMac Menjador", tablet: "Tauleta Menjador", recipes: "Receptes", home: "/Users/papa", disk: "/Volumes/Disc/Copies", video: "Vacances/IMG_2041.MOV", bill: "Rebut llum octubre.pdf", ok: "Sincronitzat", off: "Desconnectat", project: "Projecte web", pc: "PC Windows", dest: "la carpeta compartida «{}»" },
+    en: { me: "Dad's Laptop", mom: "Mom", couple: "Couple", dadson: "Dad & son", leo: "Leo's PC", backup: "Living-room backup", imac: "Living-room iMac", tablet: "Living-room tablet", recipes: "Recipes", home: "/Users/dad", disk: "/Volumes/Disk/Backups", video: "Holidays/IMG_2041.MOV", bill: "Electricity bill October.pdf", ok: "Up to date", off: "Offline", project: "Web project", pc: "Windows PC", dest: "the shared folder “{}”" },
   },
   n(k) {
     return (this.names[LANG] || this.names.es)[k];
@@ -550,8 +882,22 @@ function demoInvoke(cmd, args) {
               }),
               share("b", n("dadson"), DEMO.folder(n("dadson")), "sync", [dev("2", n("leo"), "offline", n("off"))], {
                 overall: "alone", pairing: { code: "4821 0937", expiresInSecs: 812, locked: false },
+                relay: { kind: "smb", path: "smb://papa@192.168.1.10/" + n("couple"), target: { kind: "smb", host: "192.168.1.10", share: n("couple"), subpath: "", user: "papa" }, ok: true, error: null, keepOld: false, storedFiles: 3, storedBytes: 2.4e7, waiting: [n("leo")], members: [n("leo")] },
               }),
               share("c", n("backup"), n("disk"), "backup", [dev("3", n("imac"), "synced", n("ok"))]),
+              share("d", n("project"), DEMO.folder(n("project")), "sync", [dev("4", n("pc"), "synced", n("ok"))], {
+                agent: {
+                  policy: { enabled: true, allowed: ["cargo test", "cargo build"], ask: true }, codeProject: true,
+                  suggestions: ["cargo test", "cargo build", "cargo check", "cargo clippy", "git status"],
+                  approvals: new URLSearchParams(location.search).get("open") === "agent" ? [] : [{ peerId: "4", run: "1", peer: n("pc"), client: "claude-code", command: "cargo run --example demo", subdir: "" }],
+                  active: [],
+                  history: [
+                    { incoming: true, peer: n("pc"), client: "codex", command: "cargo build --release", state: "finished", exitCode: 0, reason: null, timeMs: Date.now() - 6e5, durationMs: 48200 },
+                    { incoming: false, peer: n("pc"), client: "claude-code", command: "cargo test", state: "finished", exitCode: 101, reason: null, timeMs: Date.now() - 9e5, durationMs: 21400 },
+                    { incoming: false, peer: n("pc"), client: "claude-code", command: "cargo test", state: "finished", exitCode: 0, reason: null, timeMs: Date.now() - 1.2e6, durationMs: 19800 },
+                  ],
+                },
+              }),
             ],
     });
   if (cmd === "pick_folder") return Promise.resolve(DEMO.folder("Nueva"));
@@ -563,7 +909,9 @@ function demoInvoke(cmd, args) {
       addresses: [{ interface: "en0", ip: "192.168.1.20", tunnel: false }, { interface: "utun4", ip: "10.8.0.2", tunnel: true }],
       ports: [{ share: n("couple"), port: 47820 }, { share: n("dadson"), port: 47822 }],
     });
-  if (cmd === "app_version") return Promise.resolve("0.3.1");
+  if (cmd === "relay_options") return Promise.resolve({ google: true, dropbox: true });
+  if (cmd === "agent_setup") return Promise.resolve({ command: "/Applications/Home File Sync.app/Contents/MacOS/home-file-sync" });
+  if (cmd === "app_version") return Promise.resolve("0.4.0");
   if (cmd === "get_lang") return Promise.resolve(LANG);
   return Promise.resolve(null);
 }

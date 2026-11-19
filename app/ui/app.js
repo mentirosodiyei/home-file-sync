@@ -712,11 +712,15 @@ $("vpn-toggle").addEventListener("change", async (e) => {
 
 // Órdenes de las IA (panel de la carpeta)
 $("agent-enabled").addEventListener("change", async (e) => {
-  if (e.target.checked && !(await ask(t("agent.ask_enable"), { ok: t("agent.enable_ok") }))) {
+  // Guardar lo que el usuario eligió antes del diálogo: mientras está abierto, refresh()
+  // vuelve a pintar la casilla con el valor guardado (desactivado) y perdería el «sí».
+  const want = e.target.checked;
+  if (want && !(await ask(t("agent.ask_enable"), { ok: t("agent.enable_ok") }))) {
     e.target.checked = false;
     return;
   }
-  savePolicy({ enabled: e.target.checked });
+  e.target.checked = want;
+  savePolicy({ enabled: want });
 });
 $("agent-ask").addEventListener("change", (e) => savePolicy({ ask: e.target.checked }));
 $("agent-code").addEventListener("change", async (e) => {

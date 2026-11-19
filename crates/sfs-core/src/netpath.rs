@@ -830,8 +830,24 @@ mod tests {
             "no debe esperar al tiempo de espera de la inaccesible: {:?}",
             t.elapsed()
         );
-        assert!(attempts
-            .iter()
-            .any(|a| a.addr == closed && a.kind == Some(NetErrKind::Refused)));
+        // El rechazo de la cerrada puede llegar después de que gane la buena (en Windows
+        // el rechazo en loopback puede tardar más que el escalonado). Si llega, debe
+        // clasificarse como rechazo; el caso determinista está en `refused_is_classified`.
+        for a in attempts.iter().filter(|a| a.addr == closed) {
+            assert_eq!(a.kind, Some(NetErrKind::Refused));
+        }
+    }
+
+    #[tokio::test]
+    async fn refused_is_classified() {
+        // Sólo un puerto cerrado: sin carreras, debe quedar registrado como rechazo.
+        let closed = {
+            let t = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            t.local_addr().unwrap()
+        };
+        let cands = vec![Candidate { addr: closed, source: AddrSource::Mdns }];
+        let (s, attempts) = connect_first(&cands, &[], false).await;
+        assert!(s.is_none());
+        assert!(attempts.iter().any(|a| a.addr == closed && a.kind == Some(NetErrKind::Refused)));
     }
 }

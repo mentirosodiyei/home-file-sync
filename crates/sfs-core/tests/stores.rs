@@ -8,7 +8,8 @@
 //!   cargo test --test stores -- --ignored
 
 use sfs_core::store::{self, RelayTarget, Store};
-use std::path::Path;
+mod common;
+use common::webdav_server;
 
 fn exercise(s: &dyn Store) {
     let base = format!("prueba-{}", std::process::id());
@@ -54,26 +55,6 @@ fn folder() {
     assert!(d.path().join("Home File Sync").is_dir());
 }
 
-async fn webdav_server(dir: &Path) -> String {
-    use dav_server::{fakels::FakeLs, localfs::LocalFs, DavHandler};
-    let dav = DavHandler::builder().filesystem(LocalFs::new(dir, false, false, false)).locksystem(FakeLs::new()).build_handler();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://127.0.0.1:{}/", listener.local_addr().unwrap().port());
-    tokio::spawn(async move {
-        loop {
-            let Ok((stream, _)) = listener.accept().await else { continue };
-            let dav = dav.clone();
-            tokio::spawn(async move {
-                let svc = hyper::service::service_fn(move |req| {
-                    let dav = dav.clone();
-                    async move { Ok::<_, std::convert::Infallible>(dav.handle(req).await) }
-                });
-                let _ = hyper::server::conn::http1::Builder::new().serve_connection(hyper_util::rt::TokioIo::new(stream), svc).await;
-            });
-        }
-    });
-    url
-}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn webdav() {

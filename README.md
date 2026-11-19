@@ -86,7 +86,7 @@ Si programas con una IA en un equipo y necesitas probar en otro (por ejemplo, es
   claude mcp add --scope user home-file-sync -- "/Applications/Home File Sync.app/Contents/MacOS/home-file-sync" --mcp
   ```
 
-  En Windows, la ruta es la de `home-file-sync.exe` en la carpeta de instalación. Para Codex: `codex mcp add home-file-sync -- <ruta> --mcp`. Claude Desktop, Cursor, Gemini CLI, LM Studio y las demás usan el bloque JSON que muestra la app.
+  En Windows, la ruta es la de `home-file-sync.exe` en la carpeta de instalación, entre comillas porque tiene espacios (por defecto, `"C:\Program Files\Home File Sync\home-file-sync.exe"`). Por ejemplo, en Claude Code: `claude mcp add --scope user home-file-sync -- "C:\Program Files\Home File Sync\home-file-sync.exe" --mcp`. Para Codex: `codex mcp add home-file-sync -- "<ruta>" --mcp`. Claude Desktop, Cursor, Gemini CLI, LM Studio y las demás usan el bloque JSON que muestra la app.
 
 La IA tiene entonces las herramientas `list_machines`, `run_command`, `get_run`, `cancel_run` y `sync_now`. Antes de ejecutar, el otro equipo espera a tener todos tus cambios. Al terminar, lo que haya generado la orden vuelve antes de que la IA reciba el resultado. Home File Sync tiene que estar abierto en los dos equipos.
 

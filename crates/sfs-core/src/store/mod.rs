@@ -235,7 +235,8 @@ impl Store for FolderStore {
         let tmp = self.tmp_for(path);
         let res = (|| {
             std::fs::copy(src, &tmp)?;
-            std::fs::File::open(&tmp)?.sync_all()?;
+            // En Windows, FlushFileBuffers exige acceso de escritura: no basta abrir en solo lectura.
+            std::fs::OpenOptions::new().write(true).open(&tmp)?.sync_all()?;
             std::fs::rename(&tmp, self.p(path))
         })();
         if res.is_err() {

@@ -227,11 +227,20 @@ pub fn resolve_program(prog: &str, root: &Path, cwd: &Path, path_var: &str) -> R
     }
     let sep = if cfg!(windows) { ';' } else { ':' };
     let exts: Vec<String> = if cfg!(windows) {
-        let has_ext = Path::new(prog).extension().is_some();
-        let mut v = if has_ext { vec![String::new()] } else { vec![] };
+        // Solo extensiones que Windows ejecuta directamente (.ps1 o .js no sirven aquí).
         let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
-        v.extend(pathext.split(';').filter(|e| !e.is_empty()).map(|e| e.to_ascii_lowercase()));
-        v
+        let runnable: Vec<String> = pathext
+            .split(';')
+            .map(|e| e.trim().to_ascii_lowercase())
+            .filter(|e| matches!(e.as_str(), ".com" | ".exe" | ".bat" | ".cmd"))
+            .collect();
+        // «cargo.exe» ya trae extensión: se busca tal cual; «npm» prueba npm.cmd, npm.exe…
+        let own = Path::new(prog).extension().map(|x| format!(".{}", x.to_string_lossy().to_ascii_lowercase()));
+        if own.is_some_and(|e| runnable.contains(&e)) {
+            vec![String::new()]
+        } else {
+            runnable
+        }
     } else {
         vec![String::new()]
     };
@@ -467,5 +476,113 @@ mod tests {
     #[test]
     fn joins_for_display() {
         assert_eq!(join_command(&s(&["cargo", "test", "a b"])), "cargo test \"a b\"");
+    }
+
+    /// Carpeta temporal con la misma forma que usa la app (ruta canónica, sin `\\?\`).
+    fn share_dir() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = crate::settings::canonical(dir.path()).unwrap();
+        (dir, root)
+    }
+
+    #[test]
+    fn canonical_paths_stay_inside_the_share() {
+        let (_dir, root) = share_dir();
+        #[cfg(windows)]
+        assert!(!root.to_string_lossy().starts_with(r"\\?\"), "{root:?}");
+        std::fs::create_dir_all(root.join("app/sub")).unwrap();
+        std::fs::write(root.join("app/tool.cmd"), "").unwrap();
+        // «..» dentro de la carpeta compartida se resuelve; fuera, no.
+        assert_eq!(crate::settings::canonical(&root.join("app/sub/..")).unwrap(), root.join("app"));
+        let cwd = root.join("app");
+        let p = resolve_program("./sub/../tool.cmd", &root, &cwd, "").unwrap();
+        assert!(p.starts_with(&root), "{p:?}");
+        let outer = root.parent().unwrap().join("fuera-de-la-carpeta.cmd");
+        std::fs::write(&outer, "").unwrap();
+        assert!(resolve_program("../../fuera-de-la-carpeta.cmd", &root, &cwd, "").is_err());
+        let _ = std::fs::remove_file(outer);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn finds_cmd_and_bat_through_pathext() {
+        let (_dir, root) = share_dir();
+        std::fs::write(root.join("npm.cmd"), "@echo off\r\n").unwrap();
+        std::fs::write(root.join("gradlew.bat"), "@echo off\r\n").unwrap();
+        std::fs::write(root.join("cosa.ps1"), "").unwrap();
+        let path = root.display().to_string();
+        assert_eq!(resolve_program("npm", &root, &root, &path).unwrap(), root.join("npm.cmd"));
+        assert_eq!(resolve_program("npm.cmd", &root, &root, &path).unwrap(), root.join("npm.cmd"));
+        assert!(resolve_program("NPM", &root, &root, &path).is_ok(), "Windows no distingue mayúsculas");
+        assert_eq!(resolve_program("gradlew", &root, &root, &path).unwrap(), root.join("gradlew.bat"));
+        assert_eq!(resolve_program("./gradlew.bat", &root, &root, "").unwrap(), root.join("gradlew.bat"));
+        // .ps1 no se puede ejecutar directamente: no se busca.
+        assert!(resolve_program("cosa", &root, &root, &path).is_err());
+        assert!(resolve_program("no-existe", &root, &root, &path).is_err());
+    }
+
+    #[cfg(windows)]
+    async fn collect_output(rx: &mut tokio::sync::mpsc::Receiver<Progress>) -> String {
+        let mut out = Vec::new();
+        while let Some(p) = rx.recv().await {
+            match p {
+                Progress::Output(b) => out.extend(b),
+                Progress::Exited { .. } => break,
+            }
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn batch_arguments_arrive_intact_and_injection_is_refused() {
+        let (_dir, root) = share_dir();
+        std::fs::write(root.join("eco.cmd"), "@echo off\r\necho [%~1] [%~2]\r\n").unwrap();
+        let prog = root.join("eco.cmd");
+        let (_keep, rx) = tokio::sync::watch::channel(false);
+        let args = s(&["hola mundo", "x"]);
+        let mut ch = spawn(&prog, &args, &root, &[], Duration::from_secs(60), rx).unwrap();
+        let out = collect_output(&mut ch).await;
+        assert!(out.contains("[hola mundo] [x]"), "{out}");
+
+        // Un argumento con «&» no puede ejecutar un segundo comando: o se rechaza
+        // (Rust no pasa argumentos peligrosos a un .cmd) o cmd lo trata como texto.
+        let (_keep2, rx2) = tokio::sync::watch::channel(false);
+        let evil = s(&["a&echo pwned>pwned.txt"]);
+        if let Ok(mut ch) = spawn(&prog, &evil, &root, &[], Duration::from_secs(60), rx2) {
+            let _ = collect_output(&mut ch).await;
+        }
+        assert!(!root.join("pwned.txt").exists(), "una orden no puede encadenar otra");
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn cancel_stops_grandchildren_too() {
+        let (_dir, root) = share_dir();
+        // El .cmd lanza PowerShell (un nieto de la app). Si solo se mata cmd.exe,
+        // PowerShell sigue vivo y escribe «acabado.txt».
+        std::fs::write(
+            root.join("arbol.cmd"),
+            "@echo off\r\npowershell -NoProfile -Command \"Set-Content -Path arrancado.txt -Value ok; Start-Sleep -Seconds 4; Set-Content -Path acabado.txt -Value ok\"\r\n",
+        )
+        .unwrap();
+        let (cancel, rx) = tokio::sync::watch::channel(false);
+        let mut ch = spawn(&root.join("arbol.cmd"), &[], &root, &[], Duration::from_secs(120), rx).unwrap();
+        let t = Instant::now();
+        while !root.join("arrancado.txt").exists() {
+            assert!(t.elapsed() < Duration::from_secs(60), "el programa no arrancó");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        cancel.send(true).unwrap();
+        let reason = loop {
+            match ch.recv().await {
+                Some(Progress::Exited { reason, .. }) => break reason,
+                Some(Progress::Output(_)) => {}
+                None => break None,
+            }
+        };
+        assert!(reason.is_some(), "debe indicar que se detuvo");
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        assert!(!root.join("acabado.txt").exists(), "el proceso hijo sigue vivo tras cancelar");
     }
 }

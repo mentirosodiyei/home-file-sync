@@ -96,7 +96,8 @@ pub async fn serve_stdio(session: Arc<Session>) {
     });
     let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
     while let Ok(Some(line)) = lines.next_line().await {
-        let line = line.trim();
+        // Algunos programas de Windows escriben una marca BOM (EF BB BF) al inicio de stdin.
+        let line = line.trim_start_matches('\u{feff}').trim();
         if line.is_empty() {
             continue;
         }

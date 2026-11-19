@@ -11,6 +11,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
+mod common;
+use common::webdav_server;
+
 struct Node {
     engine: Engine,
     data: TempDir,
@@ -626,34 +629,6 @@ async fn relay_respects_backup_mode() {
     assert_eq!(a.read("doc.txt").as_deref(), Some(&b"original"[..]));
 }
 
-/// Servidor WebDAV de prueba (como un Nextcloud o un NAS) sobre una carpeta temporal.
-async fn webdav_server(dir: &Path) -> String {
-    use dav_server::{fakels::FakeLs, localfs::LocalFs, DavHandler};
-    use hyper::server::conn::http1;
-    use hyper::service::service_fn;
-    use hyper_util::rt::TokioIo;
-    let dav = DavHandler::builder().filesystem(LocalFs::new(dir, false, false, false)).locksystem(FakeLs::new()).build_handler();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://127.0.0.1:{}/", listener.local_addr().unwrap().port());
-    tokio::spawn(async move {
-        loop {
-            let Ok((stream, _)) = listener.accept().await else { continue };
-            let dav = dav.clone();
-            tokio::spawn(async move {
-                let _ = http1::Builder::new()
-                    .serve_connection(
-                        TokioIo::new(stream),
-                        service_fn(move |req| {
-                            let dav = dav.clone();
-                            async move { Ok::<_, std::convert::Infallible>(dav.handle(req).await) }
-                        }),
-                    )
-                    .await;
-            });
-        }
-    });
-    url
-}
 
 /// Lo mismo que con una carpeta, pero el relevo es un servidor WebDAV con usuario y contraseña.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
